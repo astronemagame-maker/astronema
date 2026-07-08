@@ -1,0 +1,12 @@
+Repo de scan autonome (registre wallets CollectChain)
+======================================================
+1. Creer un nouveau repo (idealement compte neuf + repo PUBLIC = minutes illimitees).
+2. Uploader par le web : le dossier scraper/ et requirements.txt.
+3. Add file -> Create new file -> chemin ".github/workflows/wallet-scan.yml"
+   -> coller le contenu de WORKFLOW_wallet-scan.yml.
+   (Verifier que la branche par defaut s'appelle "main", sinon adapter --ref main.)
+4. Actions -> "Wallet registry deep scan" -> Run workflow (defauts OK).
+   Le scan se relance tout seul jusqu'a la genese et committe
+   data/wallet_registry_deep.csv + data/wallet_scan_state.json a chaque tranche.
+5. Coller le debut du log du 1er run dans le chat (estimation du volume total).
+Aucun secret necessaire.
