@@ -1,45 +1,48 @@
 """
-Wallet registry — deep CollectChain scan + daily maintenance.
+Wallet registry — deep CollectChain scan + daily maintenance + ARCHIVE.
 
-But (finalites 5/6 de Preda) : dater la 1ere apparition on-chain de CHAQUE
-wallet ("anciennete") pour detecter les wallets reellement nouveaux chaque
-jour, sans jamais mettre ~700k lignes dans le Google Sheet.
+But (finalites 2/5/6 de Preda) : dater la 1ere apparition on-chain de CHAQUE
+wallet (~700k) ET archiver TOUS les transferts de la chaine (13,9 M) pendant
+qu'on les telecharge — qui a achete quoi depuis la genese, activite whales,
+burns — sans jamais mettre ca dans le Google Sheet.
 
-Deux CSV sous data/ (commites dans le repo par les workflows) :
+Fichiers produits :
 
-    wallet_registry_deep.csv   ecrit UNIQUEMENT par le workflow wallet-scan.yml
-                               (scan du present vers la genese, en tranches
-                               resumables ; fige une fois le scan termine).
-    wallet_registry_daily.csv  ecrit UNIQUEMENT par le run chain quotidien
-                               (scraper.chain_run -> update_from_records) ;
-                               couvre tout depuis le lancement du scan profond.
+    data/wallet_registry_deep.csv   registre wallet -> first_seen/last_active
+                                    (ecrit UNIQUEMENT par wallet-scan.yml).
+    data/wallet_registry_daily.csv  idem, alimente par le run chain quotidien
+                                    (scraper.chain_run -> update_from_records).
+    archive/transfers_runNNN.csv.gz TOUS les transferts de la tranche NNN,
+                                    uploade en GitHub Release "chain-archive"
+                                    par le workflow (PAS commite dans le repo :
+                                    pas de limite 100 Mo, repo leger).
+                                    Colonnes : block, log_index, ts_utc,
+                                    date_pt, kind, category, veve_uuid,
+                                    edition, from, to.
+                                    Dedup possible par (block, log_index)
+                                    (doublons rares : reprise apres crash).
 
-Les consommateurs FUSIONNENT les deux fichiers (min first_seen / max
-last_active / somme tx_count). Aucun workflow n'ecrit le fichier de l'autre
--> aucun conflit git possible.
+kind : mint / burn (vers 0x0 OU le coffre VeVe) / vault_mint (stock invendu
+mint -> coffre) / listing (depot escrow) / market. Les wallets systeme sont
+ARCHIVES (l'archive est brute) mais exclus du REGISTRE.
 
-Dates en PT (America/Los_Angeles), le fuseau metier de VeVe.
-first_seen = date du 1er transfert du wallet (recu ou envoye) sur CollectChain.
-Les wallets anterieurs a la migration IMX->CollectChain afficheront la date de
-migration (choix acte : CollectChain seul).
-
-Etat du scan (data/wallet_scan_state.json) :
-    next_page_params  curseur keyset pour reprendre le scan
-    pages/transfers   compteurs cumules
-    oldest_ts         jusqu'ou on est remonte
-    done              true une fois la genese atteinte
-    runs              nombre de tranches executees
+Dates en PT (America/Los_Angeles). Etat resumable dans
+data/wallet_scan_state.json (next_page_params, done, runs, archived).
 
 Env (scan profond) :
-    SCAN_MINUTES    budget temps par run (defaut 280 — tient dans un job 6 h)
+    SCAN_MINUTES    budget temps par run (defaut 280)
     SCAN_MAX_PAGES  budget pages par run (defaut 0 = illimite)
-    SCAN_PAUSE      pause entre pages (defaut 0.05 s ; augmenter = discretion)
+    SCAN_PAUSE      pause entre pages (defaut 0.05 s)
+    SCAN_ARCHIVE    "false" pour desactiver l'archivage (defaut actif)
+    SCAN_RESET      "true" = repartir de zero (ignore etat + registre existants)
 """
 
 from __future__ import annotations
 
 import csv
 import datetime as _dt
+import gzip
+import io
 import json
 import os
 import sys
@@ -53,14 +56,19 @@ DATA_DIR = os.environ.get("WALLET_DATA_DIR", "data")
 DEEP_CSV = os.path.join(DATA_DIR, "wallet_registry_deep.csv")
 DAILY_CSV = os.path.join(DATA_DIR, "wallet_registry_daily.csv")
 STATE_JSON = os.path.join(DATA_DIR, "wallet_scan_state.json")
+ARCHIVE_DIR = os.environ.get("SCAN_ARCHIVE_DIR", "archive")
 
 PT = ZoneInfo("America/Los_Angeles")
 HEADER = ["wallet", "first_seen", "last_active", "tx_count"]
+ARCHIVE_HEADER = ["block", "log_index", "ts_utc", "date_pt", "kind",
+                  "category", "veve_uuid", "edition", "from", "to"]
 SAVE_EVERY_PAGES = 2000          # checkpoint intermediaire (crash-safety)
 COUNTERS_URL = f"{cc.API_BASE}/tokens/{cc.CONTRACT}/counters"
 
-# Adresses systeme exclues du registre.
-_SKIP = {cc.ZERO, cc.MARKET_ESCROW, ""}
+# Wallet coffre burn/vault VeVe (fallback si l'ancien collectchain ne l'a pas).
+BURN_SINK = getattr(cc, "BURN_SINK", "0x39e3816a8c549ec22cd1a34a8cf7034b3941d8b1")
+# Adresses systeme exclues du REGISTRE (mais presentes dans l'ARCHIVE).
+_SKIP = {cc.ZERO, cc.MARKET_ESCROW, BURN_SINK, ""}
 
 
 def _pt_date(ts: _dt.datetime) -> str:
@@ -137,6 +145,47 @@ def _update(reg: Dict[str, Dict[str, Any]], wallet: str, date: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Archive (tous les transferts, CSV.gz par tranche -> GitHub Release)
+# ---------------------------------------------------------------------------
+
+def _kind(frm: str, to: str) -> str:
+    if frm == cc.ZERO:
+        return "vault_mint" if to == BURN_SINK else "mint"
+    if to == cc.ZERO or to == BURN_SINK:
+        return "burn"
+    if to == cc.MARKET_ESCROW:
+        return "listing"
+    return "market"
+
+
+def _archive_row(it: Dict[str, Any], ts: _dt.datetime, d: str,
+                 frm: str, to: str) -> List[Any]:
+    total = it.get("total") or {}
+    inst = (total.get("token_instance") or {}) if isinstance(total, dict) else {}
+    cat, uuid = cc._categorise(inst)
+    md = inst.get("metadata") or {}
+    ed = md.get("edition") if isinstance(md, dict) else ""
+    return [it.get("block_number"), it.get("log_index"),
+            ts.strftime("%Y-%m-%d %H:%M:%S"), d, _kind(frm, to), cat, uuid,
+            ed if ed not in (None, "") else "", frm, to]
+
+
+def _flush_archive(path: str, rows: List[List[Any]], write_header: bool) -> int:
+    """Append rows to a .csv.gz (concatenation de membres gzip = valide)."""
+    if not rows:
+        return 0
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    if write_header:
+        w.writerow(ARCHIVE_HEADER)
+    w.writerows(rows)
+    with open(path, "ab") as f:
+        f.write(gzip.compress(buf.getvalue().encode("utf-8")))
+    return len(rows)
+
+
+# ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
 
@@ -157,23 +206,35 @@ def _save_state(state: Dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Deep scan (present -> genese), resumable
+# Deep scan (present -> genese), resumable, avec archive
 # ---------------------------------------------------------------------------
 
 def deep_scan() -> int:
     budget_s = float(os.environ.get("SCAN_MINUTES", "280")) * 60
     max_pages = int(os.environ.get("SCAN_MAX_PAGES", "0"))
     pause = float(os.environ.get("SCAN_PAUSE", "0.05"))
+    archive_on = os.environ.get("SCAN_ARCHIVE", "true").strip().lower() != "false"
+    reset = os.environ.get("SCAN_RESET", "false").strip().lower() == "true"
 
-    state = _load_state()
-    if state.get("done"):
-        print("Deep scan deja termine (state.done=true) — rien a faire.", flush=True)
-        return 0
+    if reset:
+        print("RESET demande : etat et registre repartent de zero "
+              "(l'archivage couvrira toute la chaine).", flush=True)
+        state: Dict[str, Any] = {}
+        reg: Dict[str, Dict[str, Any]] = {}
+    else:
+        state = _load_state()
+        if state.get("done"):
+            print("Deep scan deja termine (state.done=true) — rien a faire.", flush=True)
+            return 0
+        reg = load_registry(DEEP_CSV)
 
-    reg = load_registry(DEEP_CSV)
+    run_no = int(state.get("runs", 0)) + 1
+    apath = os.path.join(ARCHIVE_DIR, f"transfers_run{run_no:03d}.csv.gz")
+    if archive_on and os.path.exists(apath):
+        os.remove(apath)   # rejeu du meme run apres crash : on repart proprement
     print(f"Registre deep charge : {len(reg)} wallets. "
-          f"Etat : pages={state.get('pages', 0)}, oldest={state.get('oldest_ts', '-')}",
-          flush=True)
+          f"Etat : pages={state.get('pages', 0)}, oldest={state.get('oldest_ts', '-')}. "
+          f"Archive : {'ON -> ' + apath if archive_on else 'OFF'}", flush=True)
 
     try:
         counters = token_counters()
@@ -194,6 +255,9 @@ def deep_scan() -> int:
     t0 = time.time()
     pages = 0
     transfers = 0
+    archived_run = 0
+    abuf: List[List[Any]] = []
+    header_pending = True
     oldest = state.get("oldest_ts", "")
     done = False
 
@@ -212,8 +276,12 @@ def deep_scan() -> int:
             if ts is None:
                 continue
             d = _pt_date(ts)
-            _update(reg, ((it.get("from") or {}).get("hash") or ""), d)
-            _update(reg, ((it.get("to") or {}).get("hash") or ""), d)
+            frm = ((it.get("from") or {}).get("hash") or "").lower()
+            to = ((it.get("to") or {}).get("hash") or "").lower()
+            if archive_on:
+                abuf.append(_archive_row(it, ts, d, frm, to))
+            _update(reg, frm, d)
+            _update(reg, to, d)
             transfers += 1
             oldest = d
         pages += 1
@@ -227,11 +295,17 @@ def deep_scan() -> int:
         if pages % 200 == 0:
             rate = pages / max(1.0, time.time() - t0)
             print(f"    ... {pages} pages ce run ({rate:.1f}/s), "
-                  f"{len(reg)} wallets, remonte a {oldest}", flush=True)
+                  f"{len(reg)} wallets, {archived_run + len(abuf)} archives, "
+                  f"remonte a {oldest}", flush=True)
         if pages % SAVE_EVERY_PAGES == 0:
+            if archive_on:
+                archived_run += _flush_archive(apath, abuf, header_pending)
+                header_pending = False
+                abuf = []
             save_registry(DEEP_CSV, reg)
             _save_state(state)
-            print(f"    checkpoint sauvegarde ({len(reg)} wallets).", flush=True)
+            print(f"    checkpoint sauvegarde ({len(reg)} wallets, "
+                  f"{archived_run} transferts archives ce run).", flush=True)
 
         if not nxt:
             done = True
@@ -241,13 +315,17 @@ def deep_scan() -> int:
         if pause:
             time.sleep(pause)
 
+    if archive_on:
+        archived_run += _flush_archive(apath, abuf, header_pending)
     state["done"] = done
-    state["runs"] = int(state.get("runs", 0)) + 1
+    state["runs"] = run_no
+    state["archived"] = int(state.get("archived", 0)) + archived_run
     save_registry(DEEP_CSV, reg)
     _save_state(state)
-    print(f"Run termine : {pages} pages, {transfers} transferts, "
-          f"{len(reg)} wallets dans le registre, oldest={oldest}, done={done}, "
-          f"run #{state['runs']}, duree {time.time() - t0:.0f}s.", flush=True)
+    print(f"Run termine : {pages} pages, {transfers} transferts "
+          f"({archived_run} archives -> {apath if archive_on else '-'}), "
+          f"{len(reg)} wallets, oldest={oldest}, done={done}, "
+          f"run #{run_no}, duree {time.time() - t0:.0f}s.", flush=True)
     return 0
 
 

@@ -34,8 +34,13 @@ import datetime as _dt
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import requests
+
+# Les journees on-chain sont decoupees en heure PACIFIQUE (fuseau metier VeVe),
+# et plus en UTC (changement 2026-07-08 — re-backfill requis pour l'historique).
+PT = ZoneInfo("America/Los_Angeles")
 
 API_BASE = "https://collectscan.com/api/v2"
 CONTRACT = "0xbcFEbA7A9dA14f5C9453bDA72E2098537867B3c7"
@@ -47,6 +52,13 @@ ZERO = "0x0000000000000000000000000000000000000000"
 # (seller -> escrow); a sale is escrow -> buyer; a cancel is escrow -> seller.
 # The DEPOSIT transfer's `from` reveals the seller wallet behind a market listing.
 MARKET_ESCROW = "0xb1af72a77b9065c55cda0680b86655a79b62e42c"
+# VeVe burn/vault sink: recoit les burns/crafts des utilisateurs ET les
+# "vault mints" (stock invendu minte directement au coffre, ex. 15 120
+# Street Fighter V le 2026-07-01). 1 449 328 transferts ENTRANTS, zero
+# sortant depuis toujours (verifie sur CollectScan le 2026-07-08).
+BURN_SINK = "0x39e3816a8c549ec22cd1a34a8cf7034b3941d8b1"
+# Wallets systeme : jamais comptes comme des comptes actifs dans les stats.
+SYSTEM_WALLETS = {ZERO, MARKET_ESCROW, BURN_SINK}
 
 REQUEST_TIMEOUT = 60
 MAX_RETRIES = 5
@@ -136,16 +148,20 @@ def _flatten(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     cat, uuid = _categorise(inst)
     md = inst.get("metadata") or {}
     if frm == ZERO:
-        kind = "mint"
-    elif to == ZERO:
+        # Mint direct au coffre = stock invendu "vaulte" par VeVe, pas un achat.
+        kind = "vault_mint" if to == BURN_SINK else "mint"
+    elif to == ZERO or to == BURN_SINK:
         kind = "burn"
+    elif to == MARKET_ESCROW:
+        kind = "listing"   # mise en vente (depot escrow), PAS une vente
     else:
         kind = "market"
     if not isinstance(md, dict):
         md = {}
     return {
         "ts": ts,
-        "date": ts.strftime("%Y-%m-%d"),
+        # Date en PT : un "jour" = journee pacifique, pas UTC.
+        "date": ts.replace(tzinfo=_dt.timezone.utc).astimezone(PT).strftime("%Y-%m-%d"),
         "block": item.get("block_number"),
         "log_index": item.get("log_index"),
         "tx_hash": item.get("transaction_hash") or item.get("tx_hash") or "",
@@ -254,7 +270,7 @@ ACTIVITY_FIELDS = [
 
 def _bump(agg: Dict[Tuple[str, str], Dict[str, int]], date: str, account: str,
           field: str) -> None:
-    if not account or account == ZERO:
+    if not account or account in SYSTEM_WALLETS:
         return
     row = agg.setdefault((date, account), {f: 0 for f in ACTIVITY_FIELDS})
     row[field] += 1
@@ -273,9 +289,11 @@ def aggregate_daily(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             _bump(agg, r["date"], r["to"], f"mint_{cat}")
         elif r["kind"] == "burn":
             _bump(agg, r["date"], r["from"], f"burn_{cat}")
-        else:
+        elif r["kind"] == "market":
             _bump(agg, r["date"], r["to"], f"market_in_{cat}")
             _bump(agg, r["date"], r["from"], f"market_out_{cat}")
+        # "listing" (depot escrow = mise en vente) et "vault_mint" (stock
+        # invendu minte au coffre) sont des mouvements systeme : ignores.
     rows = []
     for (date, account), counters in sorted(agg.items()):
         row = {"date": date, "account": account, **counters}
@@ -329,6 +347,8 @@ def aggregate_items(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     and by how many distinct wallets."""
     agg: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for r in records:
+        if r["kind"] in ("listing", "vault_mint"):
+            continue   # mouvements systeme (mise en vente / stock vaulte)
         cat = "comic" if r["category"] == "comic" else "collectible"
         key = (r["date"], item_key(cat, r["veve_uuid"], r["name"], r["rarity"],
                                    r["comic_number"], r["start_year"]))
@@ -350,8 +370,10 @@ def aggregate_items(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             row["burns"] += 1
         else:
             row["market"] += 1
-            row["_buyers"].add(r["to"])
-            row["_sellers"].add(r["from"])
+            if r["to"] not in SYSTEM_WALLETS:
+                row["_buyers"].add(r["to"])
+            if r["from"] not in SYSTEM_WALLETS:
+                row["_sellers"].add(r["from"])
     rows = []
     for (_, _), row in sorted(agg.items()):
         row["unique_minters"] = len(row.pop("_minters"))
