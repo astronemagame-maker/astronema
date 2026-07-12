@@ -68,7 +68,10 @@ COUNTERS_URL = f"{cc.API_BASE}/tokens/{cc.CONTRACT}/counters"
 # Wallet coffre burn/vault VeVe (fallback si l'ancien collectchain ne l'a pas).
 BURN_SINK = getattr(cc, "BURN_SINK", "0x39e3816a8c549ec22cd1a34a8cf7034b3941d8b1")
 # Adresses systeme exclues du REGISTRE (mais presentes dans l'ARCHIVE).
-_SKIP = {cc.ZERO, cc.MARKET_ESCROW, BURN_SINK, ""}
+_SKIP = (set(getattr(cc, "SYSTEM_WALLETS", ()))
+         | {cc.ZERO, cc.MARKET_ESCROW, BURN_SINK, ""})
+# Distributeurs VeVe (officiel/admin/store) — fallback si vieux collectchain.
+_DISTRIB = frozenset(getattr(cc, "DISTRIB_WALLETS", ()))
 
 
 def _pt_date(ts: _dt.datetime) -> str:
@@ -155,6 +158,8 @@ def _kind(frm: str, to: str) -> str:
         return "burn"
     if to == cc.MARKET_ESCROW:
         return "listing"
+    if frm in _DISTRIB or to in _DISTRIB:
+        return "system_transfer"
     return "market"
 
 
