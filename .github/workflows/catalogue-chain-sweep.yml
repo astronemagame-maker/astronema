@@ -1,0 +1,113 @@
+# ⚠️ DEPOT : astronema (le repo du SCAN PROFOND)   ·   CHEMIN : .github/workflows/catalogue-chain-sweep.yml
+# Passe UNIQUE de couverture : on balaie CollectChain present -> genese (la
+# migration ~janv. 2026) pour capturer 1 metadata par veve_uuid, puis on
+# rapatrie le catalogue sur scrapeur-veve et on n'utilise plus astronema.
+
+name: Catalogue chaine — balayage profond (auto-relance jusqu'a la genese)
+
+# Reutilise le collectchain.py d'astronema + scraper.export_elements_v3 (mode
+# profond, CHAINE-ONLY : pas d'elements.csv, pas de comblage, pas de comparateur).
+# Resumable par CURSEUR (state dans la Release `catalogue-chain`) : chaque run
+# consomme un budget-temps, pose son curseur, puis SE RELANCE tout seul tant que
+# `swept` n'est pas atteint (garde-fou 40 runs). Etat + csv vivent dans la
+# Release (pas de commit) -> aucun piege de checkout perime.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Budget de balayage par run (minutes, < timeout 340)"
+        default: "280"
+      auto_continue:
+        description: "Se relance tout seul jusqu'a la genese"
+        type: boolean
+        default: true
+      reset:
+        description: "Repartir de zero (ignore l'etat/curseur existant)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write          # ecrire la Release catalogue-chain
+  actions: write           # se relancer (gh workflow run)
+
+concurrency:
+  group: catalogue-chain-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+
+      # Reprise : curseur + csv depuis la Release. Le state vit dans la Release,
+      # donc PAS de dependance au checkout (pas de piege de main perime).
+      - name: Reprise (Release catalogue-chain)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESET: ${{ github.event.inputs.reset || 'false' }}
+        run: |
+          mkdir -p data
+          if [ "$RESET" = "true" ]; then
+            echo "Reset demande — on ignore l'etat existant (repart du sommet)."
+            exit 0
+          fi
+          gh release download catalogue-chain --pattern elements_v3.csv --dir data --clobber 2>/dev/null \
+            && echo "csv repris." || echo "pas de csv (1re passe)."
+          gh release download catalogue-chain --pattern elements_v3_state.json --dir data --clobber 2>/dev/null \
+            && echo "state repris." || echo "pas de state (1re passe)."
+          # GARDE-FOU anti-clobber destructeur : si la Release EXISTE deja mais que
+          # le csv n'a PAS ete telecharge (erreur reseau), on REFUSE de tourner —
+          # sinon on ecraserait une couverture cumulee par un run repartant du haut.
+          if gh release view catalogue-chain >/dev/null 2>&1 && [ ! -f data/elements_v3.csv ]; then
+            echo "ERREUR: Release catalogue-chain existe mais csv non repris — refus (eviter d'ecraser la couverture). Relancer, ou reset=true si volontaire."
+            exit 1
+          fi
+
+      - name: Balayage profond (chaine-only, une tranche)
+        env:
+          ELEMENTS_V3_MODE: profond
+          ELEMENTS_V3_PLATEAU_PAGES: "0"          # desarme : on veut TOUT
+          ELEMENTS_V3_LOOKBACK_DAYS: "3650"       # cutoff non bloquant (la chaine s'arrete a la genese)
+          ELEMENTS_V3_MAX_PAGES: "1000000"        # non bloquant : c'est le budget-temps qui arrete
+          ELEMENTS_V3_TIME_BUDGET_MIN: ${{ github.event.inputs.minutes || '280' }}
+          ELEMENTS_V3_FLUSH_EVERY: "200"
+          ELEMENTS_V3_ACCUMULATE: "1"
+          ELEMENTS_V3_COMBLER_OFFICIEL: "0"       # pas d'officiel ici : catalogue CHAINE pur
+          ELEMENTS_CSV: "data/_pas_d_officiel_ici.csv"   # absent -> off-chain vide, chaine-only
+          ELEMENTS_V3: "data/elements_v3.csv"
+          ELEMENTS_V3_STATE: "data/elements_v3_state.json"
+        run: python -m scraper.export_elements_v3
+
+      - name: Publier la progression (Release catalogue-chain)
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -f data/elements_v3.csv || { echo "Rien a publier."; exit 0; }
+          gh release view catalogue-chain >/dev/null 2>&1 || \
+            gh release create catalogue-chain --title "Catalogue chaine (balayage profond CollectChain)" \
+              --notes "elements_v3.csv = 1 metadata par veve_uuid depuis CollectChain (identite on-chain, off-chain VIDE). Passe unique present->genese ; a rapatrier sur scrapeur-veve une fois swept."
+          gh release upload catalogue-chain data/elements_v3.csv data/elements_v3_state.json --clobber
+          echo "Publie." && ls -lh data/elements_v3.csv
+
+      - name: Relance auto si pas fini (swept)
+        if: ${{ success() && github.event.inputs.auto_continue != 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SW=$(python -c "import json; print(json.load(open('data/elements_v3_state.json')).get('swept', False))" 2>/dev/null || echo "")
+          RUNS=$(python -c "import json; print(json.load(open('data/elements_v3_state.json')).get('runs', 0))" 2>/dev/null || echo 0)
+          if [ "$SW" = "True" ]; then echo "✅ BALAYAGE INTEGRAL TERMINE — pas de relance. Rapatrier le catalogue sur scrapeur-veve."; exit 0; fi
+          if [ "$RUNS" -ge 40 ]; then echo "Garde-fou : 40 runs atteints — relance stoppee."; exit 0; fi
+          echo "Incomplet (run $RUNS) — relance…"
+          gh workflow run catalogue-chain-sweep.yml --ref main \
+            -f minutes="${{ github.event.inputs.minutes || '280' }}" \
+            -f auto_continue=true -f reset=false
