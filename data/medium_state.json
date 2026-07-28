@@ -1,13 +1,13 @@
 {
   "publication": "veve-collectibles",
-  "horodatage": "2026-07-28T10:52:18+00:00",
+  "horodatage": "2026-07-28T11:20:48+00:00",
   "articles_enumeres": 472,
   "recolte": {
-    "pris": 14,
-    "echecs": 6,
-    "total": 466,
-    "repli_http": true
+    "pris": 5,
+    "echecs": 1,
+    "total": 471,
+    "repli_http": false
   },
-  "articles_en_base": 466,
-  "pieces": 1996
+  "articles_en_base": 471,
+  "pieces": 2021
 }
