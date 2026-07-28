@@ -316,10 +316,35 @@ def _lire_corpus() -> dict:
 _compteur = {"ok": 0, "echec": 0}
 
 
+def _autres_horodatages(url: str, sauf: str) -> list:
+    """Les autres captures de cette URL. ⭐ Le 1er run a perdu 20 articles sur des
+    404/410 : l'instantané choisi était mort, pas l'article. Une capture ratée
+    n'est pas un article manquant — il suffit d'en demander une autre."""
+    q = ("http://web.archive.org/cdx/search/cdx?"
+         + urllib.parse.urlencode({"url": url, "output": "json",
+                                   "fl": "timestamp", "filter": "statuscode:200",
+                                   "limit": "12"}))
+    brut = _get(q, essais=2, silencieux=True)
+    if not brut:
+        return []
+    try:
+        return [l[0] for l in json.loads(brut.decode("utf-8", "replace"))[1:]
+                if l[0] != sauf]
+    except Exception:                                # noqa: BLE001
+        return []
+
+
 def _prendre(t: dict) -> str:
-    w = "https://web.archive.org/web/%sid_/%s" % (t["ts"], t["url"])
+    horodatages = [t["ts"]]
     for n in range(2):                # 2 passes ; le backoff vit dans _get
-        brut = _get(w, essais=ESSAIS, silencieux=(n == 0))
+        if n and len(horodatages) == 1:
+            horodatages += _autres_horodatages(t["url"], t["ts"])[:3]
+        brut = None
+        for ts in horodatages[(1 if n else 0):] or horodatages:
+            brut = _get("https://web.archive.org/web/%sid_/%s" % (ts, t["url"]),
+                        essais=(ESSAIS if n == 0 else 1), silencieux=(n == 0))
+            if brut is not None:
+                break
         if brut is None:
             continue
         h = brut.decode("utf-8", "replace")
@@ -405,7 +430,20 @@ def recolter(taches: list) -> dict:
 # « Total Editions », « Published » que les figurines n'ont pas). On ramasse tout
 # et on range les champs canoniques dans des colonnes fixes ; le reste part dans
 # une colonne « autres » en JSON. ⭐ Un champ inconnu n'est jamais perdu.
-RE_CHAMP = re.compile(r"^([A-Z][A-Za-z0-9 ’'&/#.\-\(\)]{1,45}):[ \t]*(.*)$")
+RE_CHAMP = re.compile(r"^([A-Z][A-Za-z0-9 ’'&/#.\-—–\(\)]{1,45}):[ \t]*(.*)$")
+
+# ⭐⭐ LE TIRAGE PAR COUVERTURE. Pour un comic, VeVe ne donne PAS un tirage mais
+# un par variante :
+#     Total Editions: 20,000
+#     COMMON — Classic Cover: 12,000
+#     UNCOMMON — Vintage Variant: 4,500
+# Or le catalogue, lui, a UNE LIGNE PAR VARIANTE (« Immortal Hulk #1 (Classic
+# Cover) », COMMON). Sans ce découpage, l'annonce et le catalogue ne se joignent
+# jamais — et c'est le tiret cadratin qui faisait tout rater : il n'était pas
+# dans les caractères admis d'un nom de champ, donc ces lignes n'existaient pas.
+RE_VARIANTE = re.compile(
+    r"^(COMMON|UNCOMMON|RARE|ULTRA[ _-]?RARE|SECRET[ _-]?RARE|LEGENDARY|EXCLUSIVE)"
+    r"\s*[—–-]\s*(.+)$", re.I)
 
 # ⭐ Les ALIAS ne sont pas du confort : en 2020 VeVe ecrivait « Price » et
 # « Type », il n'est passe a « List Price » / « Edition Type » qu'ensuite. Sans
@@ -432,15 +470,21 @@ CANONIQUES = {
 COLONNES = ["url", "date_publication", "titre_article", "piece", "drop_date",
             "list_price", "editions", "total_editions", "rarity", "edition_type",
             "first_edition_public_sale", "license", "brand", "series", "artist",
-            "cover_variants", "published", "available", "autres"]
+            "cover_variants", "published", "available", "variante", "autres"]
 
 # Le chrome de Medium, qu'il ne faut JAMAIS prendre pour un nom de pièce.
 # ⚠️ La ligne « Dec 17, 2020 · 3 min read » est le piège : elle précède le
 # premier bloc de champs et se faisait passer pour le nom de la 1re pièce.
+# ⚠️ « VeVeFollow » aussi : le nom de l'auteur et son bouton, collés sans espace.
 BRUIT = re.compile(
     r"^(follow|share|listen|·|\d+ min read|sign in|sign up|open in app|"
-    r"veve digital collectibles|published in|written by)\b"
+    r"veve ?follow|veve digital collectibles|published in|written by)\b"
     r"|min read|^[A-Z][a-z]{2} \d{1,2},? \d{4}\s*$", re.I)
+
+# Une phrase n'est pas un nom de pièce. Les noms VeVe (« Savage She-Hulk #1 »,
+# « Adventure Time — Series 1 ») ne se terminent jamais par une ponctuation de
+# phrase ; les accroches marketing, si — et elles se retrouvaient en nom.
+RE_PHRASE = re.compile(r"[.!?]\s*$")
 
 
 def _pieces_d_un_texte(texte: str) -> list:
@@ -473,7 +517,7 @@ def _pieces_d_un_texte(texte: str) -> list:
                 vider()
             # ⚠️ search, PAS match : « Dec 17, 2020 · 3 min read » ne commence
             # par aucun des mots-clés, c'est « min read » au milieu qui le trahit.
-            if l and not BRUIT.search(l) and len(l) < 120:
+            if l and not BRUIT.search(l) and not RE_PHRASE.search(l) and len(l) < 90:
                 dernier_libre = l
     vider()
     # Un bloc d'un seul champ, c'est du bruit (« Note: … »), pas une pièce.
@@ -500,8 +544,29 @@ def construire_pieces() -> int:
                     row[col] = val
                 else:
                     autres[cle] = val
+            # ⭐ Une ligne de plus PAR VARIANTE de couverture, nommée comme le
+            # catalogue la nomme : « Immortal Hulk #1 (Classic Cover) ». La ligne
+            # d'annonce reste, elle : elle porte le tirage TOTAL, qu'aucune ligne
+            # de variante ne dit.
+            variantes = []
+            for cle, val in list(autres.items()):
+                m = RE_VARIANTE.match(cle)
+                if not m or not re.fullmatch(r"[\d.,\s]+", val or ""):
+                    continue
+                rarete = re.sub(r"[ -]+", "_", m.group(1).strip().upper())
+                nom_var = m.group(2).strip()
+                fils = dict(row)
+                fils["piece"] = "%s (%s)" % (row["piece"], nom_var) if row["piece"] else nom_var
+                fils["variante"] = nom_var
+                fils["rarity"] = rarete
+                fils["editions"] = val.strip()
+                fils["total_editions"] = ""
+                fils["autres"] = ""
+                variantes.append(fils)
+                autres.pop(cle, None)
             row["autres"] = json.dumps(autres, ensure_ascii=False) if autres else ""
             lignes.append(row)
+            lignes.extend(variantes)
     if not lignes:
         _log("⚠️ 0 pièce extraite — on n'écrase PAS %s" % PIECES)
         return 0
@@ -546,7 +611,14 @@ def verifier(taches: list) -> dict:
     fin = os.environ.get("MEDIUM_FIN", "2023-12-31")
     d = _dt.date.fromisoformat(debut)
     dfin = _dt.date.fromisoformat(fin)
-    connus = {t["url"] for t in taches}
+    # ⚠️ NE PAS COMPARER DES URL BRUTES. Medium écrit « citroën » en clair dans
+    # son sitemap, la Wayback Machine « citro%C3%ABn ». Sans cette normalisation,
+    # le contrôle annonce un article manquant qui est en base depuis le début —
+    # une fausse alerte due à l'instrument, pas à la donnée.
+    def _cle(u):
+        return urllib.parse.unquote(u).rstrip("/")
+
+    connus = {_cle(t["url"]) for t in taches}
     trouves: dict = {}
     jours = 0
     bride = False
@@ -573,7 +645,7 @@ def verifier(taches: list) -> dict:
         jours += 1
         for loc in re.findall(r"<loc>(https://medium\.com/%s/[^<]+)</loc>"
                               % re.escape(PUBLICATION), x):
-            if loc not in connus:
+            if _cle(loc) not in connus:
                 trouves[loc] = d.isoformat()
         d += _dt.timedelta(days=1)
         time.sleep(SITEMAP_PAUSE)
