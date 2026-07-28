@@ -1,0 +1,22 @@
+{
+  "publication": "veve-collectibles",
+  "horodatage": "2026-07-28T08:45:20+00:00",
+  "articles_enumeres": 472,
+  "recolte": {
+    "pris": 452,
+    "echecs": 20,
+    "total": 452,
+    "repli_http": false
+  },
+  "articles_en_base": 452,
+  "pieces": 1041,
+  "verification": {
+    "jours_lus": 1461,
+    "manquantes": [
+      "https://medium.com/veve-collectibles/marvel-digital-comics-avengers-1963-181-11ac2b3fe218",
+      "https://medium.com/veve-collectibles/the-veve-blog-has-moved-3efea2a1b84a",
+      "https://medium.com/veve-collectibles/veve-welcomes-citroën-17041263f8aa"
+    ],
+    "bride_par_medium": false
+  }
+}
