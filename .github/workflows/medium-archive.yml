@@ -75,6 +75,12 @@ on:
         default: "non"
         type: choice
         options: ["non", "oui"]
+      reprise:
+        description: "Récupérer le corpus de l'artifact du dernier run réussi (indispensable sur un dépôt public, où le corpus n'est pas commité)"
+        required: false
+        default: "oui"
+        type: choice
+        options: ["oui", "non"]
       commiter_corpus:
         description: "Commiter le corpus (prose intégrale) ? ⛔ NON si le dépôt est PUBLIC — index et pièces sont commités dans tous les cas"
         required: false
@@ -88,6 +94,7 @@ on:
 
 permissions:
   contents: write
+  actions: read          # pour aller rechercher le corpus du run precedent
 
 concurrency:
   group: medium-archive
@@ -102,6 +109,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      # ⭐ LA REPRISE SUR UN DEPOT PUBLIC. Le corpus n'y est pas commite (c'est la
+      # prose de VeVe), donc sans cette etape un 2e run repartirait de zero et
+      # re-telechargerait 452 articles pour rien — et surtout, `mode=pieces`
+      # (reparser sans re-recolter) serait tout simplement impossible.
+      # On va donc rechercher le corpus dans l'ARTIFACT du dernier run reussi.
+      - name: Reprise — récupère le corpus du dernier run réussi
+        if: ${{ (github.event.inputs.reprise || 'oui') == 'oui' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data
+          id=$(gh run list --workflow "${{ github.workflow }}" --status success \
+                 --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+          if [ -z "$id" ]; then echo "→ aucun run réussi antérieur : départ à zéro."; exit 0; fi
+          rm -rf /tmp/reprise && mkdir -p /tmp/reprise
+          if ! gh run download "$id" -D /tmp/reprise 2>/dev/null; then
+            echo "→ artifact du run $id indisponible (expiré ?) : départ à zéro."; exit 0
+          fi
+          f=$(find /tmp/reprise -name medium_corpus.jsonl | head -1)
+          if [ -n "$f" ]; then
+            cp "$f" data/medium_corpus.jsonl
+            echo "→ reprise depuis le run $id : $(wc -l < data/medium_corpus.jsonl) articles déjà en base."
+          else
+            echo "→ pas de corpus dans l'artifact du run $id : départ à zéro."
+          fi
 
       # Aucune dependance : le module n'utilise que la bibliotheque standard.
       # C'est deliberé — un collecteur qui tourne 6 h ne doit pas dependre d'un
