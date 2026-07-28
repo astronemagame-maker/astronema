@@ -1,0 +1,114 @@
+# ⚠️ DEPOT : VeVePreda/scrapeur-veve   ·   CHEMIN : .github/workflows/medium-archive.yml
+name: Archive Medium (veve-collectibles)
+
+# Archive medium.com/veve-collectibles — 2020 -> avril 2023, le trou exact que
+# blog.py (veve.me/blog, 2023 ->) ne couvre pas. Ce ne sont pas des billets mais
+# des FICHES TECHNIQUES : chaque annonce decrit ses pieces avec tirage, rarete,
+# licence, prix de lancement. Source primaire.
+#
+# POURQUOI UN WORKFLOW ET PAS UNE RECOLTE EN LOCAL : la Wayback Machine bride a
+# ~10 articles/40 s depuis une IP deja sollicitee, et l'environnement local coupe
+# tout processus au bout de 45 s. Un runner GitHub a une IP propre, 6 h devant
+# lui, et commite le resultat. C'est le meme raisonnement que archive.yml : ce
+# n'est pas un publieur, c'est un COLLECTEUR.
+#
+# ⛔ AUCUN CRON, ET C'EST VOULU. La source est FIGEE depuis avril 2023 : un
+# backfill unique suffit. Un cron sur une source morte, c'est du bruit et du
+# risque de bannissement pour rien. On relance a la main si besoin.
+#
+# ⛔ ON NE RECOLTE PAS SUR MEDIUM.COM. Ses pages d'article repondent 403 a tout
+# client non navigateur, et une passe trop rapide sur ses sitemaps a fait tomber
+# tout le domaine en 429 pendant 35 min le 28/07/2026. On lit la Wayback
+# Machine, qui rend le HTML brut d'origine : le resultat est identique.
+#
+# REPRISE : le JSONL deja commite fait foi. Relancer ne refait jamais un article
+# deja pris. Si un run est coupe, on reclique, point.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Quoi faire"
+        required: false
+        default: "tout"
+        type: choice
+        options: ["tout", "enumerer", "recolter", "pieces", "verifier"]
+      max_articles:
+        description: "Nb max d'articles à récolter ce run (0 = tout)"
+        required: false
+        default: "0"
+      workers:
+        description: "Requêtes Wayback en parallèle (4 = sûr, >6 = refus de connexion)"
+        required: false
+        default: "4"
+      garder_html:
+        description: "Garder le HTML brut gzippé (data/medium_html/) — utile pour reparser sans re-télécharger"
+        required: false
+        default: "non"
+        type: choice
+        options: ["non", "oui"]
+      publication:
+        description: "Publication Medium (sans le /)"
+        required: false
+        default: "veve-collectibles"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: medium-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Aucune dependance : le module n'utilise que la bibliotheque standard.
+      # C'est deliberé — un collecteur qui tourne 6 h ne doit pas dependre d'un
+      # pip install qui casse.
+      - name: Récolte
+        env:
+          MEDIUM_MODE: ${{ github.event.inputs.mode || 'tout' }}
+          MEDIUM_MAX: ${{ github.event.inputs.max_articles || '0' }}
+          MEDIUM_WORKERS: ${{ github.event.inputs.workers || '4' }}
+          MEDIUM_GARDER_HTML: ${{ github.event.inputs.garder_html == 'oui' && '1' || '' }}
+          MEDIUM_PUBLICATION: ${{ github.event.inputs.publication || 'veve-collectibles' }}
+        run: python -m scraper.medium_archive
+
+      # `always()` : la recolte est sacree. Meme un run coupe en cours de route
+      # doit deposer ce qu'il a deja pris, sinon on repart de zero au run suivant.
+      - name: Commit du corpus
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data/medium_corpus.jsonl data/medium_index.csv \
+                  data/medium_pieces.csv data/medium_state.json 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "medium: archive veve-collectibles ($(date -u +%F))"
+          # ⚠️ REBASER ET REESSAYER : un push rejete jetterait toute la recolte.
+          for i in 1 2 3 4 5; do
+            git pull --rebase --autostash origin main && git push origin main && break
+            sleep 10
+          done
+
+      # La copie de Preda. Le HTML brut n'est PAS commite (des dizaines de Mo
+      # dans git = depot qu'on ne clone plus) mais il part dans l'artifact.
+      - name: Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: medium-archive-${{ github.run_number }}
+          path: |
+            data/medium_corpus.jsonl
+            data/medium_index.csv
+            data/medium_pieces.csv
+            data/medium_state.json
+            data/medium_html/
+          retention-days: 90
+          if-no-files-found: warn
