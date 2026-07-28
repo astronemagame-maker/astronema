@@ -69,6 +69,7 @@ from __future__ import annotations
 import csv
 import datetime as _dt
 import gzip
+import http.client
 import json
 import os
 import re
@@ -94,8 +95,8 @@ ENTETES = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"}
 TIMEOUT = 90
 ESSAIS = 4
 
-WORKERS = max(1, int(os.environ.get("MEDIUM_WORKERS", "4")))
-PAUSE = float(os.environ.get("MEDIUM_PAUSE", "0.3"))
+WORKERS = max(1, int(os.environ.get("MEDIUM_WORKERS", "2")))
+PAUSE = float(os.environ.get("MEDIUM_PAUSE", "2.0"))
 MAXI = int(os.environ.get("MEDIUM_MAX", "0"))
 GARDER_HTML = os.environ.get("MEDIUM_GARDER_HTML", "").strip() in ("1", "oui", "true")
 SITEMAP_PAUSE = float(os.environ.get("MEDIUM_SITEMAP_PAUSE", "1.2"))
@@ -111,21 +112,98 @@ def _log(*a):
     print(*a, flush=True)
 
 
-def _get(url: str, essais: int = ESSAIS) -> bytes | None:
+# ── LE RÉSEAU, ET LA LEÇON DU 1er RUN GITHUB (28/07/2026) ───────────────────
+# Sur un runner GitHub, archive.org a refusé la connexion (Errno 111) sur
+# TOUTES les requêtes d'article — alors que l'énumération, elle, passait.
+# La différence entre les deux : l'énumération appelait http://, la récolte
+# https://. archive.org étrangle les IP de datacenter, et ça se manifeste par un
+# refus TCP sec, pas par un code HTTP.
+#
+# Trois réponses, dans cet ordre :
+#   1. UNE CONNEXION RÉUTILISÉE par thread (keep-alive). urllib rouvrait un
+#      socket + une poignée de main TLS par article : 472 ouvertures, c'est
+#      exactement ce que le pare-feu compte.
+#   2. REPLI AUTOMATIQUE https → http quand la connexion est refusée.
+#   3. ATTENTE LONGUE (60 s, 120 s…) sur un refus, pas 3 s : un refus n'est pas
+#      un incident réseau, c'est un ordre de ralentir.
+_tls = threading.local()
+_repli_http = threading.Event()      # une fois vrai, tout le monde passe en http
+
+
+def _connexion(scheme: str, hote: str):
+    """Une connexion persistante par thread. La rouvrir coûte plus que l'octet."""
+    cle = (scheme, hote)
+    c = getattr(_tls, "conn", None)
+    if c is not None and getattr(_tls, "cle", None) == cle:
+        return c
+    if c is not None:
+        try:
+            c.close()
+        except Exception:                            # noqa: BLE001
+            pass
+    fabrique = (http.client.HTTPSConnection if scheme == "https"
+                else http.client.HTTPConnection)
+    c = fabrique(hote, timeout=TIMEOUT)
+    _tls.conn, _tls.cle = c, cle
+    return c
+
+
+def _oublier_connexion():
+    c = getattr(_tls, "conn", None)
+    if c is not None:
+        try:
+            c.close()
+        except Exception:                            # noqa: BLE001
+            pass
+    _tls.conn = _tls.cle = None
+
+
+def _requete(url: str):
+    """GET keep-alive. Rend (code, corps). Lève si la connexion est impossible."""
+    p = urllib.parse.urlsplit(url)
+    scheme = "http" if (_repli_http.is_set() and p.netloc.endswith("archive.org")) \
+        else p.scheme
+    chemin = p.path + (("?" + p.query) if p.query else "")
+    dernier = None
+    for tentative in (1, 2):     # une connexion gardée trop longtemps se ferme
+        c = _connexion(scheme, p.netloc)
+        try:
+            c.request("GET", chemin, headers=dict(ENTETES, Connection="keep-alive"))
+            r = c.getresponse()
+            corps = r.read()
+            if r.status in (301, 302, 303, 307, 308):
+                cible = r.getheader("Location")
+                if cible:
+                    return _requete(urllib.parse.urljoin(url, cible))
+            return r.status, corps
+        except Exception as e:                       # noqa: BLE001
+            dernier = e
+            _oublier_connexion()
+    raise dernier
+
+
+def _get(url: str, essais: int = ESSAIS, silencieux: bool = False) -> bytes | None:
     """GET avec backoff. Rend None plutôt que de lever : la récolte continue."""
     dernier = ""
     for n in range(essais):
         try:
-            with urllib.request.urlopen(
-                    urllib.request.Request(url, headers=ENTETES), timeout=TIMEOUT) as r:
-                return r.read()
+            code, corps = _requete(url)
+            if code == 200:
+                return corps
+            dernier = "HTTP %d" % code
+            time.sleep((60 if code == 429 else 5) * (n + 1))
         except Exception as e:                       # noqa: BLE001
             dernier = str(e)
-            if getattr(e, "code", None) == 429:      # bridage : on respire fort
-                time.sleep(30 * (n + 1))
-            else:
-                time.sleep(3 * (n + 1))
-    _log("      ⚠️ échec après %d essais : %s (%s)" % (essais, url, dernier))
+            refus = ("Connection refused" in dernier or "handshake" in dernier
+                     or "timed out" in dernier)
+            if refus and url.startswith("https://") and not _repli_http.is_set():
+                _repli_http.set()
+                _log("   ↩️ connexion refusée en https → bascule de tout le run "
+                     "en http (c'est ce qui faisait passer l'énumération).")
+                continue                              # on retente tout de suite
+            time.sleep((60 * (n + 1)) if refus else (5 * (n + 1)))
+    if not silencieux:
+        _log("      ⚠️ échec après %d essais : %s (%s)" % (essais, url, dernier))
     return None
 
 
@@ -235,19 +313,21 @@ def _lire_corpus() -> dict:
     return fiches
 
 
+_compteur = {"ok": 0, "echec": 0}
+
+
 def _prendre(t: dict) -> str:
     w = "https://web.archive.org/web/%sid_/%s" % (t["ts"], t["url"])
-    for n in range(ESSAIS):
-        brut = _get(w, essais=1)
+    for n in range(2):                # 2 passes ; le backoff vit dans _get
+        brut = _get(w, essais=ESSAIS, silencieux=(n == 0))
         if brut is None:
-            time.sleep(3 * (n + 1))
             continue
         h = brut.decode("utf-8", "replace")
         date = _meta(h, "article:published_time")
         # ⭐ LA sonde qui manquait le 28/07 : sans <article> ni date, ce n'est pas
         #    un article vide, c'est une réponse inutilisable. On NE l'écrit PAS.
         if "<article" not in h or not date:
-            time.sleep(3 * (n + 1))
+            time.sleep(5 * (n + 1))
             continue
         if GARDER_HTML:
             os.makedirs(HTML_DIR, exist_ok=True)
@@ -272,8 +352,16 @@ def _prendre(t: dict) -> str:
         with _verrou:
             with open(CORPUS, "a", encoding="utf-8") as f:
                 f.write(json.dumps(fiche, ensure_ascii=False) + "\n")
+            _compteur["ok"] += 1
+            n_ok = _compteur["ok"]
+        # Un point d'avancement régulier : un log de 6 h sans repère, on ne sait
+        # pas s'il avance ou s'il tourne à vide.
+        if n_ok % 25 == 0:
+            _log("   … %d articles pris (%s)" % (n_ok, (fiche["date_publication"] or "")[:10]))
         time.sleep(PAUSE)
         return "ok"
+    with _verrou:
+        _compteur["echec"] += 1
     return "echec"
 
 
@@ -286,13 +374,29 @@ def recolter(taches: list) -> dict:
          % (len(deja), len(restant), WORKERS, PAUSE))
     if not restant:
         return {"pris": 0, "echecs": 0, "total": len(deja)}
+
+    # ⭐ SONDE D'ENTRÉE. Le 1er run GitHub a défilé 472 échecs identiques avant
+    # d'abandonner : le log était illisible et le diagnostic noyé. On teste UN
+    # article ; s'il ne passe pas, on le dit en une ligne et on s'arrête. Un
+    # collecteur qui n'arrive pas à collecter doit le dire, pas insister 6 h.
+    if _prendre(restant[0]) != "ok":
+        _log("⛔ ARRÊT : archive.org n'a pas répondu sur un article témoin, "
+             "même après repli http et attentes longues.\n"
+             "   Ce n'est pas un problème de code : ce runner est bloqué côté "
+             "archive.org.\n"
+             "   → réessayer plus tard, ou baisser à MEDIUM_WORKERS=1 et "
+             "MEDIUM_PAUSE=8.")
+        return {"pris": 0, "echecs": 1, "total": len(deja), "bloque": True}
+    restant = restant[1:]
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        res = list(ex.map(_prendre, restant))
+        list(ex.map(_prendre, restant))
     total = len(_lire_corpus())
-    _log("   → %d pris, %d échecs, %d en base, %.0f s"
-         % (res.count("ok"), res.count("echec"), total, time.time() - t0))
-    return {"pris": res.count("ok"), "echecs": res.count("echec"), "total": total}
+    _log("   → %d pris, %d échecs, %d en base, %.0f s%s"
+         % (_compteur["ok"], _compteur["echec"], total, time.time() - t0,
+            "  (en http)" if _repli_http.is_set() else ""))
+    return {"pris": _compteur["ok"], "echecs": _compteur["echec"], "total": total,
+            "repli_http": _repli_http.is_set()}
 
 
 # ─────────────────────────── 3. TABLE DES PIÈCES ───────────────────────────
