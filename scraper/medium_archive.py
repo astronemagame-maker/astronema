@@ -158,6 +158,36 @@ def _oublier_connexion():
     _tls.conn = _tls.cle = None
 
 
+def _decompresser(corps: bytes, encodage: str | None) -> bytes:
+    """⭐⭐ LE PIÈGE `id_` (mesuré le 28/07, 6 articles perdus dessus).
+
+    `web/<ts>id_/<url>` rejoue la réponse d'ORIGINE **telle quelle**, en-têtes
+    compris. Si Medium l'avait servie en gzip, on reçoit du gzip — même sans
+    avoir demandé d'`Accept-Encoding`. Sur 472 articles, 6 étaient dans ce cas :
+    le décodage donnait des octets binaires, donc ni `<article>` ni date, donc
+    la sonde les rejetait « proprement ». Un article parfaitement archivé
+    comptait comme perdu.
+
+    ⚠️ On renifle les octets magiques EN PLUS de l'en-tête : l'en-tête peut
+    manquer sur une vieille capture.
+    """
+    if not corps:
+        return corps
+    enc = (encodage or "").lower()
+    try:
+        if corps[:2] == b"\x1f\x8b" or "gzip" in enc:
+            return gzip.decompress(corps)
+        if "deflate" in enc:
+            import zlib
+            try:
+                return zlib.decompress(corps)
+            except zlib.error:
+                return zlib.decompress(corps, -zlib.MAX_WBITS)
+    except Exception:                                # noqa: BLE001
+        return corps            # illisible : on rend le brut, la sonde tranchera
+    return corps
+
+
 def _requete(url: str):
     """GET keep-alive. Rend (code, corps). Lève si la connexion est impossible."""
     p = urllib.parse.urlsplit(url)
@@ -175,7 +205,7 @@ def _requete(url: str):
                 cible = r.getheader("Location")
                 if cible:
                     return _requete(urllib.parse.urljoin(url, cible))
-            return r.status, corps
+            return r.status, _decompresser(corps, r.getheader("Content-Encoding"))
         except Exception as e:                       # noqa: BLE001
             dernier = e
             _oublier_connexion()
