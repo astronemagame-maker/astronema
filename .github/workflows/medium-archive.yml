@@ -1,4 +1,19 @@
-# ⚠️ DEPOT : VeVePreda/scrapeur-veve   ·   CHEMIN : .github/workflows/medium-archive.yml
+# ⚠️ DEPOT : astronema OU VeVePreda/scrapeur-veve   ·   CHEMIN : .github/workflows/medium-archive.yml
+#
+# CE WORKFLOW MARCHE DANS LES DEUX. Le module n'importe rien du depot : que la
+# bibliotheque standard. Il lui faut seulement un package scraper/ (avec son
+# __init__.py) et un dossier data/ — astronema comme scrapeur-veve les ont.
+# Sur astronema, l'interet est reel : repo PUBLIC = minutes Actions illimitees,
+# et cette recolte dure 30 a 90 min.
+#
+# ⛔ MAIS : SUR UN REPO PUBLIC, LE CORPUS NE SE COMMITE PAS. medium_corpus.jsonl
+# contient la PROSE INTEGRALE de VeVe. La commiter sur un repo public, c'est la
+# republier. C'est pour ca que `commiter_corpus` vaut "non" par defaut : seuls
+# l'index et la table des pieces — des FAITS (dates, tirages, raretes), qui ne
+# s'approprient pas — vont dans git. Le corpus, lui, part dans l'artifact, que
+# seul le proprietaire du depot telecharge.
+# Sur scrapeur-veve (prive), mettre "oui" : le corpus y est a sa place, et c'est
+# ce qui permet la reprise d'un run a l'autre.
 name: Archive Medium (veve-collectibles)
 
 # Archive medium.com/veve-collectibles — 2020 -> avril 2023, le trou exact que
@@ -21,6 +36,15 @@ name: Archive Medium (veve-collectibles)
 # tout le domaine en 429 pendant 35 min le 28/07/2026. On lit la Wayback
 # Machine, qui rend le HTML brut d'origine : le resultat est identique.
 #
+# ⚠️ LECON DU 1er RUN (28/07) : archive.org ETRANGLE LES IP DE DATACENTER. Les
+# 472 articles sont partis en "Connection refused" (Errno 111) alors que
+# l'enumeration passait — parce qu'elle seule appelait en http. Le module gere
+# desormais : connexion reutilisee (keep-alive), repli automatique https -> http,
+# attentes de 60 s sur un refus, et une SONDE d'entree qui arrete le run en une
+# ligne si un article temoin ne passe pas. D'ou workers=1 et pause=5 par defaut :
+# ~50 min pour les 472, largement dans le budget. Ne monter workers QUE si un
+# run passe sans echec.
+#
 # REPRISE : le JSONL deja commite fait foi. Relancer ne refait jamais un article
 # deja pris. Si un run est coupe, on reclique, point.
 
@@ -38,11 +62,21 @@ on:
         required: false
         default: "0"
       workers:
-        description: "Requêtes Wayback en parallèle (4 = sûr, >6 = refus de connexion)"
+        description: "Requêtes Wayback en parallèle. ⚠️ 1 depuis un runner : archive.org étrangle les IP de datacenter"
         required: false
-        default: "4"
+        default: "1"
+      pause:
+        description: "Pause en secondes entre deux requêtes Wayback (5 = prudent ; baisser seulement si un run passe sans échec)"
+        required: false
+        default: "5"
       garder_html:
         description: "Garder le HTML brut gzippé (data/medium_html/) — utile pour reparser sans re-télécharger"
+        required: false
+        default: "non"
+        type: choice
+        options: ["non", "oui"]
+      commiter_corpus:
+        description: "Commiter le corpus (prose intégrale) ? ⛔ NON si le dépôt est PUBLIC — index et pièces sont commités dans tous les cas"
         required: false
         default: "non"
         type: choice
@@ -76,20 +110,33 @@ jobs:
         env:
           MEDIUM_MODE: ${{ github.event.inputs.mode || 'tout' }}
           MEDIUM_MAX: ${{ github.event.inputs.max_articles || '0' }}
-          MEDIUM_WORKERS: ${{ github.event.inputs.workers || '4' }}
+          MEDIUM_WORKERS: ${{ github.event.inputs.workers || '1' }}
+          MEDIUM_PAUSE: ${{ github.event.inputs.pause || '5' }}
           MEDIUM_GARDER_HTML: ${{ github.event.inputs.garder_html == 'oui' && '1' || '' }}
           MEDIUM_PUBLICATION: ${{ github.event.inputs.publication || 'veve-collectibles' }}
         run: python -m scraper.medium_archive
 
       # `always()` : la recolte est sacree. Meme un run coupe en cours de route
       # doit deposer ce qu'il a deja pris, sinon on repart de zero au run suivant.
-      - name: Commit du corpus
+      #
+      # ⚠️ Sans le corpus commite, la REPRISE ne survit pas d'un run a l'autre :
+      # le module se reprend sur medium_corpus.jsonl. Sur un depot public, un run
+      # coupe repart donc de zero — c'est le prix a payer, et il est acceptable :
+      # la recolte complete tient dans un seul run.
+      - name: Commit
         if: always()
+        env:
+          COMMITER_CORPUS: ${{ github.event.inputs.commiter_corpus || 'non' }}
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add data/medium_corpus.jsonl data/medium_index.csv \
-                  data/medium_pieces.csv data/medium_state.json 2>/dev/null || true
+          git add data/medium_index.csv data/medium_pieces.csv \
+                  data/medium_state.json 2>/dev/null || true
+          if [ "$COMMITER_CORPUS" = "oui" ]; then
+            git add data/medium_corpus.jsonl 2>/dev/null || true
+          else
+            echo "⛔ corpus NON commité (dépôt supposé public) — il est dans l'artifact."
+          fi
           git diff --cached --quiet || git commit -m "medium: archive veve-collectibles ($(date -u +%F))"
           # ⚠️ REBASER ET REESSAYER : un push rejete jetterait toute la recolte.
           for i in 1 2 3 4 5; do
