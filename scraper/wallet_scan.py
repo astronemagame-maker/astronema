@@ -1,3 +1,10 @@
+# ⚠️ DEPOTS : astronema ET VeVePreda/scrapeur-veve   ·   CHEMIN : scraper/wallet_scan.py
+#
+# ⭐ FICHIER VOLONTAIREMENT PARTAGE ET IDENTIQUE dans ces deux depots (verifie
+# byte-a-byte le 29/07/2026). La question n'est donc pas « ou va-t-il ? » mais
+# « est-il identique PARTOUT ? ». Deposer une version dans UN SEUL des deux
+# creerait exactement la divergence silencieuse qu'on repare ici.
+#
 """
 Wallet registry — deep CollectChain scan + daily maintenance + ARCHIVE.
 
@@ -70,8 +77,28 @@ BURN_SINK = getattr(cc, "BURN_SINK", "0x39e3816a8c549ec22cd1a34a8cf7034b3941d8b1
 # Adresses systeme exclues du REGISTRE (mais presentes dans l'ARCHIVE).
 _SKIP = (set(getattr(cc, "SYSTEM_WALLETS", ()))
          | {cc.ZERO, cc.MARKET_ESCROW, BURN_SINK, ""})
-# Distributeurs VeVe (officiel/admin/store) — fallback si vieux collectchain.
+# ---------------------------------------------------------------------------
+# 🔴🔴 CE REPLI ECHOUAIT OUVERT — corrige le 29/07/2026.
+#
+# Avant : `_DISTRIB = frozenset(getattr(cc, "DISTRIB_WALLETS", ()))`.
+# Ecrit comme un garde-fou (« au cas ou collectchain serait vieux »), c'etait en
+# realite un interrupteur silencieux : la constante manquait VRAIMENT dans le
+# collectchain de ce depot, donc `_DISTRIB` valait frozenset(), la branche
+# `system_transfer` de `_kind()` etait MORTE, et toutes les livraisons VeVe sont
+# parties dans l'archive en `kind="market"`.
+# Cout mesure le 29/07 sur l'entrepot : 216 838 transferts mal etiquetes,
+# 26,9 % de tout le « market » de l'ere CollectChain. Aucune erreur, aucun log.
+#
+# ⭐⭐ UN REPLI DOIT CRIER CE QU'IL REMPLACE. Un `getattr(..., ())` transforme
+# une dependance absente en comportement normal — c'est la meme famille que le
+# `except Exception` qui rend 429 et timeout egaux.
+# ---------------------------------------------------------------------------
 _DISTRIB = frozenset(getattr(cc, "DISTRIB_WALLETS", ()))
+if not _DISTRIB:
+    raise RuntimeError(
+        "collectchain.DISTRIB_WALLETS est absent ou vide : les livraisons VeVe "
+        "seraient archivees en kind='market' (defaut du 29/07, 216 838 lignes). "
+        "Deposer le collectchain.py a jour dans CE depot avant de relancer.")
 
 
 def _pt_date(ts: _dt.datetime) -> str:

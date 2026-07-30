@@ -1,3 +1,15 @@
+# ⚠️ DEPOTS : astronema ET paolo   ·   CHEMIN : scraper/collectchain.py
+#
+# ⭐ CE FICHIER EST VOLONTAIREMENT PARTAGE, ET IDENTIQUE, DANS CES DEUX DEPOTS
+# (aucun des deux ne peut importer l'autre). La question n'est donc pas « ou
+# va-t-il ? » mais « est-il identique PARTOUT ? » — le seul controle qui vaille.
+#
+# ⛔ IL EXISTE UNE TROISIEME COPIE, DANS `VeVePreda/scrapeur-veve`, ET ELLE EST
+# DELIBEREMENT DIFFERENTE : elle importe `scraper.sentinelle_sources` (🩺 A4) et
+# porte `aggregate_listing_daily`. astronema et paolo n'ont PAS la sentinelle :
+# y deposer la version de scrapeur-veve leve un ImportError au demarrage et
+# arrete la moisson lourde. ⛔ NE PAS « resynchroniser » les trois.
+#
 """
 CollectChain (collectscan.com) on-chain activity collector.
 
@@ -57,8 +69,38 @@ MARKET_ESCROW = "0xb1af72a77b9065c55cda0680b86655a79b62e42c"
 # Street Fighter V le 2026-07-01). 1 449 328 transferts ENTRANTS, zero
 # sortant depuis toujours (verifie sur CollectScan le 2026-07-08).
 BURN_SINK = "0x39e3816a8c549ec22cd1a34a8cf7034b3941d8b1"
+# ---------------------------------------------------------------------------
+# 🔴 DISTRIBUTEURS VeVe — ajoute le 29/07/2026 apres mesure sur l'entrepot.
+#
+# CE QUI MANQUAIT, ET CE QUE CA COUTAIT : `wallet_scan._kind()` lit ces wallets
+# via `getattr(cc, "DISTRIB_WALLETS", ())`. Comme ce fichier ne les definissait
+# pas, le repli rendait un ensemble VIDE, la branche `system_transfer` etait
+# MORTE, et toute livraison VeVe partait dans l'archive en `kind="market"`.
+# Mesure du 29/07 sur `Archive/` : **216 838 transferts** touchant un de ces
+# wallets sont etiquetes `market`, soit **26,9 % de tout le "market"** de l'ere
+# CollectChain (203 435 livraisons + 13 403 retours). Toute metrique batie sur
+# `kind='market'` — volume, ventes secondaires, sections des newsletters — etait
+# donc gonflee d'environ un quart.
+#
+# ⭐⭐ LA LECON : `getattr(x, "Y", ())` ecrit comme garde-fou est un repli qui
+# ECHOUE OUVERT. Il n'a pas protege d'une absence, il l'a RENDUE MUETTE. Un
+# repli doit crier ce qu'il remplace — voir le controle en fin de fichier.
+# ---------------------------------------------------------------------------
+
+# Hub d'emission/distribution VeVe "VeveCollection" : recoit les mints de stock
+# et distribue aux acheteurs. Topologie : officiel -> admin -> user.
+VEVE_OFFICIAL = "0x7be178ba43a9828c22997a3ec3640497d88d2fd3"
+# Wallet ADMIN livraisons ("Admin Collectible Transfer" sur StackR) : tampon de
+# distribution.
+ADMIN_WALLET = "0xdb721de5f825fcb3d2dbe3a4778e34e43ae7c095"
+# Identite on-chain du VeveStore (0 transfert a ce jour — preventif).
+VEVE_STORE = "0xc4817870a6a75704985be4f9933643a27739afc1"
+# Leurs transferts user<->systeme sont des LIVRAISONS/RETOURS, pas des ventes
+# secondaires : kind "system_transfer". Le cote utilisateur reste compte actif.
+DISTRIB_WALLETS = {VEVE_OFFICIAL, ADMIN_WALLET, VEVE_STORE}
+
 # Wallets systeme : jamais comptes comme des comptes actifs dans les stats.
-SYSTEM_WALLETS = {ZERO, MARKET_ESCROW, BURN_SINK}
+SYSTEM_WALLETS = {ZERO, MARKET_ESCROW, BURN_SINK} | DISTRIB_WALLETS
 
 REQUEST_TIMEOUT = 60
 MAX_RETRIES = 5
