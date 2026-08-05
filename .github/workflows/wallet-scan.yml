@@ -30,6 +30,10 @@ on:
         description: "Repartir de zero (ignore l'etat existant)"
         type: boolean
         default: false
+      purger_release:
+        description: "AVEC reset : SUPPRIMER les tranches existantes de la Release chain-archive. OBLIGATOIRE pour un vrai repart-de-zero."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -63,6 +67,70 @@ jobs:
           fi
           echo "Garde-fou OK."
 
+      # 🔴🔴 GARDE-FOU AJOUTE LE 05/08/2026 — UN RESET NE PURGE RIEN TOUT SEUL.
+      #
+      # `gh release upload --clobber` ecrase FICHIER PAR FICHIER, par nom. Un
+      # reset qui produit 40 tranches la ou l'ancien scan en avait 30 remplace
+      # run001..run030 et LAISSE run031..run040 de l'ancien. L'inverse aussi :
+      # 30 neuves sur 40 anciennes laissent 10 orphelines.
+      #
+      # ⭐⭐⭐ UN RESET QUI NE PURGE PAS SA DESTINATION N'EST PAS UN RESET,
+      # C'EST UNE SUPERPOSITION. Meme famille que « l'upload web GitHub
+      # n'efface jamais rien » (paye le 18/07/2026) : l'outil applique ce qu'on
+      # lui donne, il ne devine pas ce qu'on voulait remplacer.
+      #
+      # ⛔ POURQUOI CA COMPTE MAINTENANT : le correctif `system_transfer` du
+      # 05/08 rend l'ancienne archive FAUSSE sur 216 838 transferts (26,9 % du
+      # « market »). Un reset qui laisse des tranches anciennes melange les
+      # bonnes et les mauvaises lignes — et la dedup par (block, log_index)
+      # de `merge_transfers` garde la PREMIERE lue, pas la plus juste.
+      # ⭐⭐ DEUX SOURCES QUI SE RECOUVRENT MAL NE PRODUISENT PAS UNE ERREUR,
+      # ELLES PRODUISENT UNE MOYENNE.
+      #
+      # ⛔ LA PURGE RESTE UN GESTE EXPLICITE. Elle n'est pas automatique avec
+      # `reset` : effacer 30 tranches de scan represente des heures de
+      # collecte. Le workflow REFUSE simplement de faire un reset silencieux.
+      - name: "Reset sans purge = REFUS (anti-superposition)"
+        if: ${{ github.event.inputs.reset == 'true' && github.event.inputs.purger_release != 'true' }}
+        run: |
+          echo "⛔ reset=true SANS purger_release=true."
+          echo ""
+          echo "Un reset repart de run001, mais --clobber n'ecrase que les noms"
+          echo "qu'il reecrit : les tranches anciennes au-dela du nouveau compte"
+          echo "RESTERAIENT dans la Release, avec leurs kind d'avant le correctif."
+          echo ""
+          echo "  * repart-de-zero PROPRE  -> reset=true ET purger_release=true"
+          echo "  * simple reprise         -> reset=false (defaut)"
+          exit 1
+
+      - name: "Purge de la Release chain-archive (reset propre)"
+        if: ${{ github.event.inputs.reset == 'true' && github.event.inputs.purger_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view chain-archive >/dev/null 2>&1; then
+            echo "Pas de Release chain-archive — rien a purger."; exit 0
+          fi
+          # ⭐ On compte AVANT et APRES : une purge qui ne supprime rien et une
+          # purge sur une Release deja vide s'impriment pareil.
+          avant=$(gh release view chain-archive --json assets \
+                  --jq '.assets | length')
+          echo "Tranches presentes : $avant"
+          gh release view chain-archive --json assets --jq '.assets[].name' \
+            | while read -r a; do
+                echo "  suppression $a"
+                gh release delete-asset chain-archive "$a" -y || exit 1
+              done
+          apres=$(gh release view chain-archive --json assets \
+                  --jq '.assets | length')
+          echo "Tranches restantes : $apres"
+          if [ "$apres" != "0" ]; then
+            echo "⛔ La purge a laisse $apres tranche(s) — on s'arrete plutot"
+            echo "   que de superposer du neuf sur de l'ancien."
+            exit 1
+          fi
+          echo "✅ Release vide — le scan repart sur une base saine."
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -86,7 +154,7 @@ jobs:
           ls archive/*.csv.gz >/dev/null 2>&1 || { echo "Pas d'archive a uploader."; exit 0; }
           gh release view chain-archive >/dev/null 2>&1 || \
             gh release create chain-archive --title "Archive transferts CollectChain" \
-              --notes "CSV.gz par tranche de scan. Colonnes: block,log_index,ts_utc,date_pt,kind,category,veve_uuid,edition,from,to. Dedup par (block,log_index)."
+              --notes "CSV.gz par tranche de scan. Colonnes: block,log_index,ts_utc,date_pt,kind,category,veve_uuid,edition,from,to,token_id. Dedup par (block,log_index). token_id ajoute le 05/08/2026 (11e colonne, EN FIN) : il identifie les mints dont la metadonnee n'existe pas encore, donc sans veve_uuid."
           gh release upload chain-archive archive/*.csv.gz --clobber
           echo "Archive uploadee :" && ls -lh archive/
 
