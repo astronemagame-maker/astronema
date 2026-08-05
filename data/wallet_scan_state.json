@@ -1,10 +1,13 @@
 {
- "next_page_params": null,
+ "next_page_params": {
+  "index": 11684,
+  "block_number": 6486
+ },
  "oldest_ts": "2026-01-28",
- "pages": 278361,
- "transfers": 13918042,
- "updated_at": "2026-07-15 18:29:05",
- "done": true,
- "runs": 33,
- "archived": 13918042
+ "pages": 43911,
+ "transfers": 2195550,
+ "updated_at": "2026-08-05 13:12:19",
+ "done": false,
+ "runs": 1,
+ "archived": 2195550
 }
