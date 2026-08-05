@@ -1,13 +1,14 @@
 {
  "next_page_params": {
-  "index": 14437,
-  "block_number": 6188
+  "index": 14438,
+  "block_number": 6012
  },
  "oldest_ts": "2026-01-28",
- "pages": 60974,
- "transfers": 3048700,
- "updated_at": "2026-08-05 17:52:45",
+ "pages": 72920,
+ "transfers": 3646000,
+ "updated_at": "2026-08-05 22:33:21",
  "done": false,
- "runs": 2,
- "archived": 3048700
+ "runs": 3,
+ "archived": 3646000,
+ "cadence_p_s": 0.711
 }
