@@ -67,8 +67,39 @@ ARCHIVE_DIR = os.environ.get("SCAN_ARCHIVE_DIR", "archive")
 
 PT = ZoneInfo("America/Los_Angeles")
 HEADER = ["wallet", "first_seen", "last_active", "tx_count"]
+# 🆕 11e colonne (05/08/2026) — `token_id`, L'IDENTITE DE L'EXEMPLAIRE.
+# ⭐⭐⭐ ELLE SAUVE EXACTEMENT LES LIGNES QUE `veve_uuid` NE PEUT PAS SAUVER.
+#
+# `_categorise(inst)` lit l'uuid dans l'ADRESSE DE L'IMAGE de la metadonnee. Au
+# MINT, cette metadonnee n'est pas encore attachee : pas d'image, donc pas
+# d'uuid, donc une ligne anonyme. Mesure du 05/08 sur l'archive locale :
+#
+#     167 159 transferts CollectChain sans veve_uuid, dont
+#         103 672 mint          (61,9 %)
+#          63 386 vault_mint    (37,9 %)  <- le stock invendu, matiere du 🔥 BURN
+#             101 tout le reste ( 0,1 %)
+#
+# 99,96 % sont des mints. Or `total.token_id` est un champ du TRANSFERT, pas de
+# la metadonnee : il est present sur ces lignes-la aussi. Avec lui, la carte
+# `holders` (token_id -> veve_uuid, qui traduit deja 99,25 % des token_id IMX)
+# les rend identifiables.
+# ⭐⭐ UNE LIGNE ANONYME N'EST PAS UNE LIGNE SANS IDENTITE : C'EST UNE LIGNE
+# DONT ON A LU LE MAUVAIS CHAMP.
+#
+# ⛔ EN FIN, jamais au milieu : `merge_transfers.py` (fanablefrance/jetonveve)
+# lit ce format par POSITION (`p[0]`..`p[9]`, garde `len(p) < 10`). Une
+# insertion ne leverait aucune erreur chez lui — elle decalerait les valeurs,
+# dans un autre depot et plus tard.
+# ⭐⭐ UN FORMAT PARTAGE PAR TROIS DEPOTS NE SE MODIFIE QU'EN FIN.
+#
+# ⚠️ MEME COLONNE, MEME PLACE que `scrapeur-veve/scraper/chain_run.py` (lot 64).
+# Les deux ecrivent le MEME format et doivent rester alignes : c'est la raison
+# d'etre de l'alignement declare en tete de `chain_run.ARCHIVE_HEADER`.
+#
+# ⛔ CE LOT NE REMPLIT RIEN A LUI SEUL : l'archive deja publiee garde ses
+# colonnes. Le token_id n'apparait qu'au PROCHAIN SCAN PROFOND.
 ARCHIVE_HEADER = ["block", "log_index", "ts_utc", "date_pt", "kind",
-                  "category", "veve_uuid", "edition", "from", "to"]
+                  "category", "veve_uuid", "edition", "from", "to", "token_id"]
 SAVE_EVERY_PAGES = 2000          # checkpoint intermediaire (crash-safety)
 COUNTERS_URL = f"{cc.API_BASE}/tokens/{cc.CONTRACT}/counters"
 
@@ -199,7 +230,11 @@ def _archive_row(it: Dict[str, Any], ts: _dt.datetime, d: str,
     ed = md.get("edition") if isinstance(md, dict) else ""
     return [it.get("block_number"), it.get("log_index"),
             ts.strftime("%Y-%m-%d %H:%M:%S"), d, _kind(frm, to), cat, uuid,
-            ed if ed not in (None, "") else "", frm, to]
+            ed if ed not in (None, "") else "", frm, to,
+            # ⭐ `total.token_id`, PAS `inst.metadata` : c'est un champ du
+            # transfert. Il survit donc aux mints, ou la metadonnee est encore
+            # vide et ou `uuid` sort vide juste au-dessus.
+            str(total.get("token_id") or "")]
 
 
 def _flush_archive(path: str, rows: List[List[Any]], write_header: bool) -> int:
