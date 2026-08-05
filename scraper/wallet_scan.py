@@ -312,8 +312,41 @@ def deep_scan() -> int:
               f"({100.0 * done_n / total if total else 0:.1f} %).", flush=True)
         if total:
             remaining_pages = max(0, (total - done_n)) // 50
+            # 🔴 L'ESTIMATION DIVISAIT PAR 2.0 EN DUR (corrige le 05/08/2026).
+            #
+            # Le scan IMPRIME sa cadence reelle toutes les 200 pages — il la
+            # connait donc. L'estimation, elle, supposait 2 pages/s pour
+            # toujours. Mesure du run #47 : cadence reelle **1,1 p/s**, ETA
+            # annoncee **33,3 h**, ETA vraie **60 h**. Un facteur 2 sur une
+            # attente de deux jours, et rien pour le signaler.
+            #
+            # ⭐⭐ **UNE ESTIMATION QUI N'UTILISE PAS LA MESURE QU'ELLE A SOUS
+            # LA MAIN EST UNE PROMESSE, PAS UNE PREVISION.**
+            #
+            # ⚠️ La cadence n'est pas connue AU DEMARRAGE de ce run — on repart
+            # donc de celle du run PRECEDENT, memorisee dans l'etat. Au tout
+            # premier run il n'y a rien : on garde 2.0, et on le DIT.
+            # ⭐ La valeur de repli est ANNONCEE comme telle : c'est ce qui
+            # manquait. Un chiffre par defaut qui ne se presente pas comme un
+            # defaut se lit comme une mesure.
+            cadence = float(state.get("cadence_p_s") or 0.0)
+            if cadence > 0:
+                origine = f"cadence MESUREE au run precedent : {cadence:.2f} p/s"
+            else:
+                cadence, origine = 2.0, "AUCUNE mesure encore — repli a 2 p/s"
+            heures = remaining_pages / cadence / 3600
             print(f"Estimation restante : ~{remaining_pages} pages "
-                  f"(~{remaining_pages / 2.0 / 3600:.1f} h a ~2 pages/s).", flush=True)
+                  f"(~{heures:.1f} h — {origine}).", flush=True)
+            # ⭐ Le nombre de RUNS est ce qui interesse vraiment : c'est lui
+            # qu'on compare au garde-fou. L'afficher evite de le recalculer de
+            # tete a chaque fois — et de decouvrir trop tard qu'on le frole.
+            par_run = budget_s * cadence
+            if par_run > 0:
+                restants = remaining_pages / par_run
+                alerte = "  ⚠️ GARDE-FOU 40 RUNS EN VUE" if restants > 30 else ""
+                print(f"  soit ~{restants:.1f} run(s) de "
+                      f"{budget_s/60:.0f} min a cette cadence.{alerte}",
+                      flush=True)
     except Exception as e:
         print(f"counters warning: {e}", flush=True)
 
@@ -387,6 +420,15 @@ def deep_scan() -> int:
     state["done"] = done
     state["runs"] = run_no
     state["archived"] = int(state.get("archived", 0)) + archived_run
+    # 🆕 LA CADENCE DE CE RUN, POUR L'ESTIMATION DU SUIVANT (05/08/2026).
+    # ⭐ On memorise la cadence du run QUI VIENT DE FINIR, pas une moyenne
+    # depuis le debut : la cadence de ce scan s'est effondree de 3,6 a 1,1 p/s
+    # en atteignant la genese du 28/01. Une moyenne aurait lisse exactement le
+    # phenomene qu'on veut voir. ⭐⭐ *Une moyenne sur une grandeur qui derive
+    # decrit un regime qui n'existe plus.*
+    duree = max(1.0, time.time() - t0)
+    if pages:
+        state["cadence_p_s"] = round(pages / duree, 3)
     save_registry(DEEP_CSV, reg)
     _save_state(state)
     print(f"Run termine : {pages} pages, {transfers} transferts "
