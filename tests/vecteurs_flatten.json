@@ -1,0 +1,524 @@
+{
+ "_genere_le": "2026-08-05",
+ "_reference": "VeVePreda/scrapeur-veve  scraper/collectchain.py (lot 63)",
+ "cas": [
+  {
+   "nom": "mint (metadonnee VIDE — le cas des 167 159)",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0x0000000000000000000000000000000000000000"
+    },
+    "to": {
+     "hash": "0xbbb"
+    },
+    "total": {
+     "token_id": "999001",
+     "token_instance": {
+      "image_url": "",
+      "metadata": {}
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0x0000000000000000000000000000000000000000",
+    "to": "0xbbb",
+    "kind": "mint",
+    "category": "unknown",
+    "veve_uuid": "",
+    "token_id": "999001",
+    "name": "",
+    "rarity": "",
+    "series": "",
+    "comic_number": "",
+    "start_year": "",
+    "total_editions": "",
+    "edition": "",
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  },
+  {
+   "nom": "vault_mint (stock invendu)",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0x0000000000000000000000000000000000000000"
+    },
+    "to": {
+     "hash": "0x39e3816a8c549ec22cd1a34a8cf7034b3941d8b1"
+    },
+    "total": {
+     "token_id": "999002",
+     "token_instance": {
+      "image_url": "",
+      "metadata": {}
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0x0000000000000000000000000000000000000000",
+    "to": "0x39e3816a8c549ec22cd1a34a8cf7034b3941d8b1",
+    "kind": "vault_mint",
+    "category": "unknown",
+    "veve_uuid": "",
+    "token_id": "999002",
+    "name": "",
+    "rarity": "",
+    "series": "",
+    "comic_number": "",
+    "start_year": "",
+    "total_editions": "",
+    "edition": "",
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  },
+  {
+   "nom": "burn",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0xaaa"
+    },
+    "to": {
+     "hash": "0x0000000000000000000000000000000000000000"
+    },
+    "total": {
+     "token_id": "999003",
+     "token_instance": {
+      "image_url": "x/comic_cover.11111111-2222-3333-4444-555555555555.a.webp",
+      "metadata": {}
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0xaaa",
+    "to": "0x0000000000000000000000000000000000000000",
+    "kind": "burn",
+    "category": "comic",
+    "veve_uuid": "11111111-2222-3333-4444-555555555555",
+    "token_id": "999003",
+    "name": "",
+    "rarity": "",
+    "series": "",
+    "comic_number": "",
+    "start_year": "",
+    "total_editions": "",
+    "edition": "",
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  },
+  {
+   "nom": "listing (depot escrow)",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0xaaa"
+    },
+    "to": {
+     "hash": "0xb1af72a77b9065c55cda0680b86655a79b62e42c"
+    },
+    "total": {
+     "token_id": "999004",
+     "token_instance": {
+      "image_url": "x/comic_cover.11111111-2222-3333-4444-555555555555.a.webp",
+      "metadata": {}
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0xaaa",
+    "to": "0xb1af72a77b9065c55cda0680b86655a79b62e42c",
+    "kind": "listing",
+    "category": "comic",
+    "veve_uuid": "11111111-2222-3333-4444-555555555555",
+    "token_id": "999004",
+    "name": "",
+    "rarity": "",
+    "series": "",
+    "comic_number": "",
+    "start_year": "",
+    "total_editions": "",
+    "edition": "",
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  },
+  {
+   "nom": "system_transfer (livraison VeVe)",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0x7be178ba43a9828c22997a3ec3640497d88d2fd3"
+    },
+    "to": {
+     "hash": "0xbbb"
+    },
+    "total": {
+     "token_id": "999005",
+     "token_instance": {
+      "image_url": "x/comic_cover.11111111-2222-3333-4444-555555555555.a.webp",
+      "metadata": {}
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0x7be178ba43a9828c22997a3ec3640497d88d2fd3",
+    "to": "0xbbb",
+    "kind": "system_transfer",
+    "category": "comic",
+    "veve_uuid": "11111111-2222-3333-4444-555555555555",
+    "token_id": "999005",
+    "name": "",
+    "rarity": "",
+    "series": "",
+    "comic_number": "",
+    "start_year": "",
+    "total_editions": "",
+    "edition": "",
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  },
+  {
+   "nom": "market (vente secondaire)",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0xaaa"
+    },
+    "to": {
+     "hash": "0xbbb"
+    },
+    "total": {
+     "token_id": "999006",
+     "token_instance": {
+      "image_url": "x/comic_cover.11111111-2222-3333-4444-555555555555.a.webp",
+      "metadata": {}
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0xaaa",
+    "to": "0xbbb",
+    "kind": "market",
+    "category": "comic",
+    "veve_uuid": "11111111-2222-3333-4444-555555555555",
+    "token_id": "999006",
+    "name": "",
+    "rarity": "",
+    "series": "",
+    "comic_number": "",
+    "start_year": "",
+    "total_editions": "",
+    "edition": "",
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  },
+  {
+   "nom": "collectible, metadonnee COMPLETE",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0xaaa"
+    },
+    "to": {
+     "hash": "0xbbb"
+    },
+    "total": {
+     "token_id": "777",
+     "token_instance": {
+      "image_url": "x/collectible_type_image.22222222-3333-4444-5555-666666666666.a.webp",
+      "metadata": {
+       "name": "Fenrir",
+       "rarity": "Ultra Rare",
+       "series": "VeVe D&D",
+       "totalEditions": 3000,
+       "edition": 12,
+       "brand": "VeVe D&D",
+       "licensor": "VeVe",
+       "description": "Depuis la chaine.",
+       "dropDate": "2026-01-05",
+       "mintDate": "2025-12-26",
+       "editionType": "FE",
+       "image": "https://d11.x/collectible_type_image.abc.webp"
+      }
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0xaaa",
+    "to": "0xbbb",
+    "kind": "market",
+    "category": "collectible",
+    "veve_uuid": "22222222-3333-4444-5555-666666666666",
+    "token_id": "777",
+    "name": "Fenrir",
+    "rarity": "Ultra Rare",
+    "series": "VeVe D&D",
+    "comic_number": "",
+    "start_year": "",
+    "total_editions": 3000,
+    "edition": 12,
+    "brand": "VeVe D&D",
+    "licensor": "VeVe",
+    "description": "Depuis la chaine.",
+    "drop_date": "2026-01-05",
+    "mint_date": "2025-12-26",
+    "edition_type": "FE",
+    "image_url": "https://d11.x/collectible_type_image.abc.webp"
+   }
+  },
+  {
+   "nom": "comic avec comicNumber/startYear",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0xaaa"
+    },
+    "to": {
+     "hash": "0xbbb"
+    },
+    "total": {
+     "token_id": "888",
+     "token_instance": {
+      "image_url": "x/comic_cover.11111111-2222-3333-4444-555555555555.a.webp",
+      "metadata": {
+       "name": "Superior Iron Man #1",
+       "rarity": "Rare",
+       "series": "Superior Iron Man",
+       "comicNumber": "1",
+       "startYear": "2014",
+       "totalEditions": 5000,
+       "edition": 7
+      }
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0xaaa",
+    "to": "0xbbb",
+    "kind": "market",
+    "category": "comic",
+    "veve_uuid": "11111111-2222-3333-4444-555555555555",
+    "token_id": "888",
+    "name": "Superior Iron Man #1",
+    "rarity": "Rare",
+    "series": "Superior Iron Man",
+    "comic_number": "1",
+    "start_year": "2014",
+    "total_editions": 5000,
+    "edition": 7,
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  },
+  {
+   "nom": "token_id ABSENT de l'API",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0xaaa"
+    },
+    "to": {
+     "hash": "0xbbb"
+    },
+    "total": {
+     "token_instance": {
+      "image_url": "x/comic_cover.11111111-2222-3333-4444-555555555555.a.webp",
+      "metadata": {
+       "name": "Superior Iron Man #1",
+       "rarity": "Rare",
+       "series": "Superior Iron Man",
+       "comicNumber": "1",
+       "startYear": "2014",
+       "totalEditions": 5000,
+       "edition": 7
+      }
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0xaaa",
+    "to": "0xbbb",
+    "kind": "market",
+    "category": "comic",
+    "veve_uuid": "11111111-2222-3333-4444-555555555555",
+    "token_id": "",
+    "name": "Superior Iron Man #1",
+    "rarity": "Rare",
+    "series": "Superior Iron Man",
+    "comic_number": "1",
+    "start_year": "2014",
+    "total_editions": 5000,
+    "edition": 7,
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  },
+  {
+   "nom": "metadonnee non-dict (vieux jeton 2021)",
+   "brut": {
+    "timestamp": "2026-07-09T12:00:00.000000Z",
+    "block_number": 1000,
+    "log_index": 0,
+    "transaction_hash": "0xdead",
+    "from": {
+     "hash": "0xaaa"
+    },
+    "to": {
+     "hash": "0xbbb"
+    },
+    "total": {
+     "token_id": "111",
+     "token_instance": {
+      "image_url": "x/comic_cover.11111111-2222-3333-4444-555555555555.a.webp",
+      "metadata": {}
+     }
+    }
+   },
+   "attendu": {
+    "ts": "2026-07-09T12:00:00",
+    "date": "2026-07-09",
+    "block": 1000,
+    "log_index": 0,
+    "tx_hash": "0xdead",
+    "from": "0xaaa",
+    "to": "0xbbb",
+    "kind": "market",
+    "category": "comic",
+    "veve_uuid": "11111111-2222-3333-4444-555555555555",
+    "token_id": "111",
+    "name": "",
+    "rarity": "",
+    "series": "",
+    "comic_number": "",
+    "start_year": "",
+    "total_editions": "",
+    "edition": "",
+    "brand": "",
+    "licensor": "",
+    "description": "",
+    "drop_date": "",
+    "mint_date": "",
+    "edition_type": "",
+    "image_url": ""
+   }
+  }
+ ]
+}

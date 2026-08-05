@@ -196,6 +196,22 @@ def _flatten(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         kind = "burn"
     elif to == MARKET_ESCROW:
         kind = "listing"   # mise en vente (depot escrow), PAS une vente
+    # 🔴🔴 BRANCHE RETABLIE LE 05/08/2026 — elle etait ABSENTE de cette copie.
+    # Le commentaire de `DISTRIB_WALLETS`, 100 lignes plus haut, decrit ce bug
+    # au PASSE (« le repli rendait un ensemble VIDE, la branche etait MORTE »)
+    # et chiffre son cout : 216 838 transferts, 26,9 % de tout le « market » de
+    # l'ere CollectChain (203 435 livraisons + 13 403 retours). La constante a
+    # bien ete ajoutee. LA BRANCHE, NON. `system_transfer` n'apparaissait plus
+    # que dans DEUX COMMENTAIRES de ce fichier, et dans aucune ligne de code.
+    # ⭐⭐⭐ UN COMMENTAIRE QUI EXPLIQUE UN CORRECTIF N'EST PAS LE CORRECTIF —
+    # et ecrit au passe, il se relit comme une reparation faite.
+    # ⭐⭐ UNE CONSTANTE DEFINIE N'EST PAS UNE BRANCHE BRANCHEE : `grep
+    # DISTRIB_WALLETS` la trouvait, ce qui suffisait a croire le sujet clos.
+    # ⛔ CE FICHIER PRODUIT LE SCAN PROFOND, donc l'essentiel de l'archive : les
+    # 216 838 ne sont pas un vieux stock a reclasser, ils CONTINUAIENT d'etre
+    # produits a chaque scan.
+    elif frm in DISTRIB_WALLETS or to in DISTRIB_WALLETS:
+        kind = "system_transfer"   # livraison/retour VeVe (drops, store, admin)
     else:
         kind = "market"
     if not isinstance(md, dict):
@@ -213,6 +229,28 @@ def _flatten(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "category": cat,
         "veve_uuid": uuid,
         "token_id": str(total.get("token_id") or ""),
+        # 🆕 05/08/2026 — les 7 champs que ce `return` ne recopiait pas, et
+        # qu'on rachetait ensuite a my-nft-tracker et au GraphQL VeVe. Ils
+        # arrivent DEJA dans chaque reponse : zero requete nouvelle.
+        # ⭐⭐⭐ UN CHAMP JETE PAR UNE LISTE NOIRE SE RETROUVE EN CHERCHANT LA
+        # LISTE ; UN CHAMP SIMPLEMENT NON RECOPIE PAR UN `return {}` NE LAISSE
+        # AUCUNE TRACE — rien a grep, rien a auditer.
+        # ⛔ La chaine porte les NOMS de marque et de licence, JAMAIS leurs
+        # uuid : `brand_uuid`/`licensor_uuid` restent au GraphQL.
+        "brand": md.get("brand") or "",
+        "licensor": md.get("licensor") or "",
+        "description": md.get("description") or "",
+        # ⛔ `image` de la METADONNEE, PAS `inst.image_url` : ce dernier sert a
+        # IDENTIFIER la piece (le regex de `_categorise`) et ne dit pas la meme
+        # chose. Les confondre remplit la colonne avec une adresse qui a l’air
+        # juste — un ecart qu’aucune erreur ne signale.
+        # ⭐ `drop_date` et `mint_date` restent DEUX champs : sur un drop elles
+        # coincident, sur un craft non. Deux dates qui se ressemblent 9 fois
+        # sur 10 sont un piege, et on n'arbitre pas a la place de l'appelant.
+        "drop_date": str(md.get("dropDate") or ""),
+        "mint_date": str(md.get("mintDate") or ""),
+        "edition_type": str(md.get("editionType") or ""),
+        "image_url": md.get("image") or "",
         "name": md.get("name") or "",
         "rarity": md.get("rarity") or "",
         "series": md.get("series") or "",
