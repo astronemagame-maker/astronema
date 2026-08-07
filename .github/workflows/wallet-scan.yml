@@ -140,11 +140,42 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 🔴 AJOUTÉ LE 07/08/2026 — TÉMOIN DE PROGRESSION.
+      # On relit `pages` AVANT le scan pour pouvoir répondre, APRÈS, à une
+      # question que `success()` ne pose pas : « ce run a-t-il avancé ? »
+      - name: "Pages avant scan (temoin)"
+        id: avant
+        run: |
+          P=$(python -c "import json;print(json.load(open('data/wallet_scan_state.json')).get('pages',0))" 2>/dev/null || echo 0)
+          echo "pages=$P" >> "$GITHUB_OUTPUT"
+          echo "Pages cumulees avant ce run : $P"
+
       - name: Deep scan (tranche)
         env:
           SCAN_MINUTES: ${{ github.event.inputs.minutes || '280' }}
           SCAN_RESET: ${{ github.event.inputs.reset || 'false' }}
         run: python -m scraper.wallet_scan
+
+      # 🔴 AJOUTÉ LE 07/08/2026 — COMPTEUR QUI SURVIT À L'ANNULATION.
+      # `state["runs"]` n'est incrémenté qu'à la SORTIE PROPRE de la boucle
+      # Python : un run annulé n'y apparaît jamais. Le garde-fou « 40 runs »
+      # ne comptait donc que les runs réussis et ne pouvait pas plafonner une
+      # série d'annulations. ⭐⭐ Un compteur qui ne compte que les succès ne
+      # protège de rien : ce sont les échecs qui bouclent.
+      - name: "Compteur de relances (survit aux annulations)"
+        if: ${{ always() }}
+        run: |
+          python - <<'EOF'
+          import json, pathlib
+          p = pathlib.Path("data/wallet_scan_state.json")
+          if p.exists():
+              s = json.loads(p.read_text())
+              s["relances"] = int(s.get("relances", 0)) + 1
+              p.write_text(json.dumps(s))
+              print("relances =", s["relances"])
+          else:
+              print("Pas d'etat — rien a compter.")
+          EOF
 
       - name: Upload archive (Release chain-archive)
         if: ${{ always() }}
@@ -171,16 +202,51 @@ jobs:
             sleep $((i * 5))
           done
 
-      - name: Relance auto si pas fini
-        if: ${{ success() && github.event.inputs.auto_continue != 'false' }}
+      # 🔴🔴 RÉÉCRIT LE 07/08/2026 — LE RUN #52 A ÉTÉ *CANCELED* À 3 h 52,
+      # DONC `success()` ÉTAIT FAUX, DONC LA RELANCE N'A PAS EU LIEU.
+      # L'archive et le commit sont passés (ils sont en `always()`), la
+      # progression était intacte : la chaîne s'est arrêtée alors que RIEN
+      # n'était cassé — et rien ne l'a signalé.
+      #
+      # ⭐⭐⭐ `success()` RÉPOND « LE RUN S'EST-IL BIEN TERMINÉ ? », PAS
+      # « LE TRAVAIL A-T-IL AVANCÉ ? ». Sur un collecteur repris par
+      # checkpoints, c'est la seconde question qui décide, et elle se MESURE :
+      # pages_après > pages_avant. Une annulation d'infra devient alors un
+      # incident sans conséquence, et un vrai plantage (0 page) n'entraîne
+      # aucune relance — le garde-fou anti-boucle est la mesure elle-même,
+      # pas une condition de statut.
+      #
+      # ⛔ ARRÊT MANUEL : créer le fichier `data/STOP_SCAN` sur main. C'est le
+      # seul moyen d'interrompre la chaîne à la main, puisque annuler un run
+      # ne l'arrête plus.
+      - name: Relance auto si le run a AVANCE
+        if: ${{ always() && github.event.inputs.auto_continue != 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          AVANT: ${{ steps.avant.outputs.pages }}
         run: |
+          if [ -f data/STOP_SCAN ]; then
+            echo "⛔ data/STOP_SCAN present — arret demande a la main."; exit 0
+          fi
           DONE=$(python -c "import json; print(json.load(open('data/wallet_scan_state.json')).get('done', False))" 2>/dev/null || echo "")
-          RUNS=$(python -c "import json; print(json.load(open('data/wallet_scan_state.json')).get('runs', 0))" 2>/dev/null || echo 0)
-          if [ "$DONE" = "True" ]; then echo "Scan termine — pas de relance."; exit 0; fi
-          if [ "$RUNS" -ge 40 ]; then echo "Garde-fou : 40 runs atteints — relance stoppee."; exit 0; fi
-          echo "Scan incomplet (run $RUNS) — relance..."
+          APRES=$(python -c "import json; print(json.load(open('data/wallet_scan_state.json')).get('pages', 0))" 2>/dev/null || echo 0)
+          RELANCES=$(python -c "import json; print(json.load(open('data/wallet_scan_state.json')).get('relances', 0))" 2>/dev/null || echo 0)
+          echo "pages : $AVANT -> $APRES   (relances cumulees : $RELANCES)"
+          if [ "$DONE" = "True" ]; then
+            echo "✅ Genese atteinte — pas de relance."; exit 0
+          fi
+          if [ "${APRES:-0}" -le "${AVANT:-0}" ]; then
+            echo "⛔ AUCUNE progression sur ce run ($AVANT -> $APRES)."
+            echo "   Relance suspendue : relancer en boucle un scan qui n'avance"
+            echo "   pas ne fait que repeter la panne. Regarder le log ci-dessus."
+            exit 0
+          fi
+          if [ "${RELANCES:-0}" -ge 60 ]; then
+            echo "⛔ Garde-fou : 60 tranches lancees — chaine stoppee."
+            echo "   Verifier l'estimation restante avant de repartir."
+            exit 0
+          fi
+          echo "Scan incomplet mais en progression — relance..."
           gh workflow run wallet-scan.yml --ref main \
             -f minutes="${{ github.event.inputs.minutes || '280' }}" \
             -f auto_continue=true -f reset=false
