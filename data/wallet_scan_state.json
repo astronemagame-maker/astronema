@@ -1,14 +1,1 @@
-{
- "next_page_params": {
-  "index": 13176,
-  "block_number": 5138
- },
- "oldest_ts": "2026-01-28",
- "pages": 112152,
- "transfers": 5607600,
- "updated_at": "2026-08-06 16:06:30",
- "done": false,
- "runs": 6,
- "archived": 5207600,
- "cadence_p_s": 0.597
-}
+{"next_page_params": {"index": 7569, "block_number": 5015}, "oldest_ts": "2026-01-28", "pages": 120664, "transfers": 6033200, "updated_at": "2026-08-07 11:14:20", "done": false, "runs": 7, "archived": 5633200, "cadence_p_s": 0.507, "relances": 1}
