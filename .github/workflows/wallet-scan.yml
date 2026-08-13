@@ -150,10 +150,28 @@ jobs:
           echo "pages=$P" >> "$GITHUB_OUTPUT"
           echo "Pages cumulees avant ce run : $P"
 
+      # 🔴🔴 AJOUTÉ LE 13/08/2026 — LE NOM DE LA TRANCHE NE DOIT PLUS DÉPENDRE
+      # D'UN COMPTEUR INTERNE. `run_id` est unique par construction et stable
+      # à travers un re-run, ce qui est exactement le comportement voulu :
+      # deux runs distincts ne peuvent plus écrire le même fichier, un re-run
+      # réécrit le sien.
+      - name: "Tranches en Release AVANT ce run (témoin)"
+        id: tranches_avant
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view chain-archive --json assets \
+            --jq '.assets[]|select(.name|endswith(".csv.gz"))|.name' \
+            > /tmp/tranches_avant.txt 2>/dev/null || : > /tmp/tranches_avant.txt
+          N=$(wc -l < /tmp/tranches_avant.txt)
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+          echo "Tranches deja publiees : $N"
+
       - name: Deep scan (tranche)
         env:
           SCAN_MINUTES: ${{ github.event.inputs.minutes || '280' }}
           SCAN_RESET: ${{ github.event.inputs.reset || 'false' }}
+          SCAN_ARCHIVE_TAG: gh${{ github.run_id }}
         run: python -m scraper.wallet_scan
 
       # 🔴 AJOUTÉ LE 07/08/2026 — COMPTEUR QUI SURVIT À L'ANNULATION.
@@ -188,6 +206,64 @@ jobs:
               --notes "CSV.gz par tranche de scan. Colonnes: block,log_index,ts_utc,date_pt,kind,category,veve_uuid,edition,from,to,token_id. Dedup par (block,log_index). token_id ajoute le 05/08/2026 (11e colonne, EN FIN) : il identifie les mints dont la metadonnee n'existe pas encore, donc sans veve_uuid."
           gh release upload chain-archive archive/*.csv.gz --clobber
           echo "Archive uploadee :" && ls -lh archive/
+
+      # 🔴🔴 AJOUTÉ LE 13/08/2026 — LE GARDE-FOU QUI MANQUAIT.
+      # 400 000 transferts (blocs 5138-5255, contigus) ont disparu de la
+      # Release sans qu'un seul run rougisse : une tranche déjà publiée a été
+      # remplacée par une autre portant le même nom.
+      # ⭐⭐ IL COMPTE, IL NE DÉDUIT PAS : il relit la liste réelle des noms
+      # avant et après, et calcule combien de tranches NEUVES ce run apporte.
+      # Un re-run qui réécrit sa propre tranche n'apporte rien de neuf et reste
+      # vert ; un run qui écrase la tranche d'un AUTRE run fait chuter le
+      # total et devient rouge.
+      - name: "🔴 INVARIANT : aucune tranche publiée ne disparaît"
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! ls archive/*.csv.gz >/dev/null 2>&1; then
+            echo "Ce run n'a produit aucune tranche — invariant SANS OBJET."
+            echo "(Ce n'est pas un succes : c'est une absence de sujet.)"
+            exit 0
+          fi
+          # 🔴🔴 CE CONTRÔLE-CI EXISTE PARCE QUE MES PROPRES MUTANTS L'ONT
+          # EXIGÉ. Sans lui, le scénario EXACT du 13/08 — une tranche déjà
+          # publiée réécrite par un autre run — sortait VERT : le compte de
+          # tranches ne bouge pas, et rien ne distingue cette collision d'un
+          # re-run légitime.
+          # ⭐⭐⭐ Le nommage par run_id EMPÊCHE la collision ; ce contrôle
+          # vérifie que le nommage a bien eu lieu. Retirer l'un sans l'autre
+          # rouvre la porte en silence — et une omission ne se lit dans aucun
+          # diff.
+          for f in archive/*.csv.gz; do
+            case "$(basename "$f")" in
+              *gh${{ github.run_id }}*) ;;
+              *) echo "⛔ Tranche « $(basename "$f") » ne porte pas l'identifiant"
+                 echo "   de ce run (gh${{ github.run_id }}). SCAN_ARCHIVE_TAG n'a pas"
+                 echo "   ete transmis : deux runs peuvent de nouveau ecrire le meme"
+                 echo "   nom, et la moisson de l'un remplacer celle de l'autre."
+                 exit 1 ;;
+            esac
+          done
+          echo "✅ Toutes les tranches portent l'identifiant de ce run."
+          AV=$(wc -l < /tmp/tranches_avant.txt)
+          NEUVES=0
+          for f in archive/*.csv.gz; do
+            n=$(basename "$f")
+            grep -Fxq "$n" /tmp/tranches_avant.txt || NEUVES=$((NEUVES + 1))
+          done
+          gh release view chain-archive --json assets \
+            --jq '[.assets[]|select(.name|endswith(".csv.gz"))]|length' > /tmp/ap.txt
+          AP=$(cat /tmp/ap.txt)
+          ATTENDU=$((AV + NEUVES))
+          echo "tranches avant=$AV · neuves apportees=$NEUVES · attendu=$ATTENDU · reel=$AP"
+          if [ "$AP" -ne "$ATTENDU" ]; then
+            echo "⛔ $((ATTENDU - AP)) tranche(s) publiee(s) ont DISPARU de la Release."
+            echo "   Une moisson deja acquise vient d'etre remplacee."
+            echo "   ⛔ NE PAS RELANCER le scan avant d'avoir lu quelles tranches manquent."
+            exit 1
+          fi
+          echo "✅ Aucune tranche publiee n'a ete perdue."
 
       - name: Commit de la progression
         if: ${{ always() }}
