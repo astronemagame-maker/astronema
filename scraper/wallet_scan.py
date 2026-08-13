@@ -296,7 +296,23 @@ def deep_scan() -> int:
         reg = load_registry(DEEP_CSV)
 
     run_no = int(state.get("runs", 0)) + 1
-    apath = os.path.join(ARCHIVE_DIR, f"transfers_run{run_no:03d}.csv.gz")
+    # 🔴🔴 13/08/2026 — 400 000 TRANSFERTS ONT DISPARU PAR CE NOM DE FICHIER.
+    # `run_no` derive de state["runs"], qui n'est ecrit qu'a la SORTIE de la
+    # boucle. Le curseur de pagination, lui, est sauve a chaque checkpoint.
+    # ⇒ deux runs peuvent avancer dans la chaine en portant le MEME numero,
+    # donc ecrire le MEME nom de tranche, et l'upload `--clobber` fait
+    # disparaitre la premiere SANS AUCUNE ERREUR.
+    # Mesure du 13/08 : 80 runs GitHub, 33 tranches, 400 000 lignes absentes
+    # sur les blocs 5138-5255 (contigus) — voir MESURE-trou-scan-13-08-2026.md.
+    #
+    # ⭐ Le tag est fourni par l'appelant (identifiant de run GitHub, unique
+    # par construction). Sans tag on retombe sur l'ancien nom : le module
+    # reste lancable a la main sans rien casser.
+    _brut = os.environ.get("SCAN_ARCHIVE_TAG", "").strip()
+    tag = "".join(c for c in _brut if c.isalnum() or c in "_-")[:40]
+    apath = os.path.join(
+        ARCHIVE_DIR,
+        f"transfers_{tag}.csv.gz" if tag else f"transfers_run{run_no:03d}.csv.gz")
     if archive_on and os.path.exists(apath):
         os.remove(apath)   # rejeu du meme run apres crash : on repart proprement
     print(f"Registre deep charge : {len(reg)} wallets. "
@@ -356,6 +372,13 @@ def deep_scan() -> int:
     pages = 0
     transfers = 0
     archived_run = 0
+    # 🔴 13/08/2026 — `state["transfers"]` compte `len(items)` AVANT le filtre
+    # des timestamps nuls, alors que le tampon d'archive se remplit APRES.
+    # ⭐⭐ LES DEUX NE COMPTENT PAS LA MEME CHOSE, MEME QUAND TOUT VA BIEN :
+    # un controle « transfers == archived » rougirait pour une raison legitime.
+    # D'ou ce troisieme compteur, pose exactement la ou le tampon se remplit —
+    # c'est lui, et lui seul, qui se compare a ce qui est ecrit.
+    archivables = 0
     abuf: List[List[Any]] = []
     header_pending = True
     oldest = state.get("oldest_ts", "")
@@ -380,6 +403,7 @@ def deep_scan() -> int:
             to = ((it.get("to") or {}).get("hash") or "").lower()
             if archive_on:
                 abuf.append(_archive_row(it, ts, d, frm, to))
+                archivables += 1   # 🔴 compte AU MEME ENDROIT que le tampon
             _update(reg, frm, d)
             _update(reg, to, d)
             transfers += 1
@@ -417,9 +441,27 @@ def deep_scan() -> int:
 
     if archive_on:
         archived_run += _flush_archive(apath, abuf, header_pending)
+
+        # 🔴🔴 INVARIANT LOCAL — tout ce qui est entre dans le tampon doit etre
+        # ressorti sur le disque. Il ne remplace pas le controle d'apres-upload
+        # (l'ecrasement du 13/08 s'est produit APRES cette ligne, dans la
+        # Release) : il ferme l'autre moitie du chemin.
+        if archived_run != archivables:
+            raise SystemExit(
+                f"⛔ ARCHIVE INCOMPLETE : {archivables} lignes mises en tampon, "
+                f"{archived_run} ecrites dans {apath} "
+                f"(manque {archivables - archived_run}). "
+                "Etat NON sauvegarde — le prochain run repartira du meme point.")
+
     state["done"] = done
     state["runs"] = run_no
     state["archived"] = int(state.get("archived", 0)) + archived_run
+    # ⚠️ CLE NEUVE SUR UN ETAT ANCIEN : sans cette amorce, `archivable`
+    # partirait de 0 face a un `archived` deja a 13 764 444, et l'invariant
+    # serait faux des le premier run. On l'aligne une seule fois.
+    if "archivable" not in state:
+        state["archivable"] = int(state.get("archived", 0)) - archived_run
+    state["archivable"] = int(state["archivable"]) + archivables
     # 🆕 LA CADENCE DE CE RUN, POUR L'ESTIMATION DU SUIVANT (05/08/2026).
     # ⭐ On memorise la cadence du run QUI VIENT DE FINIR, pas une moyenne
     # depuis le debut : la cadence de ce scan s'est effondree de 3,6 a 1,1 p/s
